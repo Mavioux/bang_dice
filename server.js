@@ -1,9 +1,7 @@
-// server.js
-
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors'); // Import cors
+const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
@@ -22,20 +20,10 @@ const PORT = process.env.PORT || 3000;
 
 // Game data
 const players = {}; // { socketId: { name, role, health, arrows, isAlive } }
-const gameState = {
-    started: false,
-    playerOrder: [],
-    currentTurn: null,
-    arrowsInPlay: 0, // Track arrows for Indian attacks
-    indianAttackActive: false, // Track if an Indian attack is ongoing
-};
-
-// Dice
-const diceSymbols = ['Bullet', 'Arrow', 'Dynamite', 'Beer', 'Gatling', 'DoubleBullet'];
-const diceResult = diceSymbols[Math.floor(Math.random() * diceSymbols.length)];
+const gameState = { started: false, playerOrder: [], currentTurn: null };
 
 // Roles
-const roles = ['Sheriff', 'Renegade', 'Outlaw',  'Outlaw', 'Deputy', 'Outlaw', 'Deputy', 'Renegade'];
+const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'Deputy', 'Renegade'];
 
 // Serve a basic response
 app.get('/', (req, res) => {
@@ -48,6 +36,7 @@ io.on('connection', (socket) => {
 
   // Test emit to confirm connection
   socket.emit('testConnection', 'You are connected to the server!');
+
   // Join Game
   socket.on('joinGame', (playerName) => {
     players[socket.id] = { name: playerName, role: null, health: 8, arrows: 0, isAlive: true };
@@ -56,64 +45,50 @@ io.on('connection', (socket) => {
   });
 
   // Start Game & Assign Roles
-  const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'Deputy', 'Renegade'];
-
 socket.on('startGame', () => {
   if (Object.keys(players).length < 4) {
     io.emit('gameError', 'Need at least 4 players to start the game.');
     return;
   }
 
-  // Step 1: Slice the roles array based on the number of players
-  const numPlayers = Object.keys(players).length;
-  const rolesForGame = roles.slice(0, numPlayers); // Take the first N roles
-
-  // Step 2: Shuffle the sliced roles array
-  for (let i = rolesForGame.length - 1; i > 0; i--) {
+  const shuffledRoles = [...roles];
+  for (let i = shuffledRoles.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [rolesForGame[i], rolesForGame[j]] = [rolesForGame[j], rolesForGame[i]];
+    [shuffledRoles[i], shuffledRoles[j]] = [shuffledRoles[j], shuffledRoles[i]];
   }
 
-  // Step 3: Assign roles to players
   Object.keys(players).forEach((id, index) => {
-    players[id].role = rolesForGame[index];
-    if (id === socket.id) {
-      // Emit to the sender (player who started the game)
-      socket.emit('assignRole', { id, role: rolesForGame[index] });
-      console.log(`🎭 Assigned role to ${players[id].name}: ${rolesForGame[index]}`);
-    } else {
-      // Emit to other players
-      socket.to(id).emit('assignRole', { id, role: rolesForGame[index] });
-      console.log(`🎭 Assigned role to ${players[id].name}: ${rolesForGame[index]}`);
-    }
+    players[id].role = shuffledRoles[index];
+    io.to(id).emit('assignRole', { id, role: shuffledRoles[index] }); // Emit privately
   });
 
-  // Update game state
   gameState.started = true;
   gameState.playerOrder = Object.keys(players);
-  gameState.currentTurn = gameState.playerOrder[0];
+  gameState.currentTurn = gameState.playerOrder[0]; // Set the first player's turn
 
-  io.emit('gameStarted', players);
+  // Notify all players of the current turn and game start
+  io.emit('updateTurn', gameState.currentTurn);
+  io.emit('gameStarted', Object.values(players)); // Send the full players list to all clients
 });
 
   // Dice Roll
   socket.on('rollDice', () => {
-    if (socket.id !== gameState.currentTurn) return; // Only current player can roll
+    if (socket.id !== gameState.currentTurn) {
+      socket.emit('gameError', 'It is not your turn to roll the dice.');
+      return;
+    }
 
     const diceResult = Math.floor(Math.random() * 6) + 1;
     console.log(`🎲 Dice rolled by ${players[socket.id].name}: ${diceResult}`);
     io.emit('diceResult', { player: players[socket.id].name, result: diceResult });
-  });
 
-  // Player Action
-  socket.on('playerAction', (action) => {
-    const player = players[socket.id];
-    if (action.type === 'shoot' && diceResult === 'Bullet') {
-      // Handle shooting logic
-    } else if (action.type === 'heal' && diceResult === 'Beer') {
-      // Handle healing logic
-    }
-    io.emit('actionTaken', action);
+    // Move to the next player's turn
+    const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
+    const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
+    gameState.currentTurn = gameState.playerOrder[nextIndex];
+
+    // Notify all players of the new turn
+    io.emit('updateTurn', gameState.currentTurn);
   });
 
   // Disconnect Handling

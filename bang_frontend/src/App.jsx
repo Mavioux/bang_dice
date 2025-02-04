@@ -15,26 +15,41 @@ export default function App() {
   const [indianAttackActive, setIndianAttackActive] = useState(false);
 
   useEffect(() => {
+    // Listen for updates from the server
     socket.on('playerListUpdate', (updatedPlayers) => {
+      console.log('Updated Players:', updatedPlayers);
       setPlayers(updatedPlayers);
     });
 
+    // Handle role assignment
     socket.on('assignRole', (data) => {
-      setRole(data.role);
+      console.log('Assigned Role:', data);
+      setRole(data.role); // Update the role state
     });
 
+    // Handle game start
     socket.on('gameStarted', (players) => {
+      console.log('Game Started with Players:', players);
       setGameStarted(true);
+      setPlayers(players); // Update the players state
+    });
+
+    // Handle current turn updates
+    socket.on('updateTurn', (currentTurn) => {
+      console.log('Current Turn:', currentTurn);
+      setCurrentTurn(currentTurn);
     });
 
     socket.on('diceResult', (data) => setDiceResult(data));
     socket.on('indianAttack', (isActive) => setIndianAttackActive(isActive));
     socket.on('updateArrows', (arrows) => setArrowsInPlay(arrows));
 
+    // Cleanup listeners on unmount
     return () => {
       socket.off('playerListUpdate');
       socket.off('assignRole');
       socket.off('gameStarted');
+      socket.off('updateTurn');
       socket.off('diceResult');
       socket.off('indianAttack');
       socket.off('updateArrows');
@@ -56,9 +71,9 @@ export default function App() {
   };
 
   return (
-    <div className={`app-container ${gameStarted ? 'fullscreen' : ''}`}>
+    <div className={`app-container ${gameStarted ? 'game-started' : ''}`}>
       {!gameStarted ? (
-        <div className="lobby-container centered">
+        <div className="lobby-container">
           <h1 className="title">🎲 Bang! The Dice Game 🎯</h1>
           <input
             type="text"
@@ -90,36 +105,43 @@ export default function App() {
         </div>
       ) : (
         <div className="game-container">
-          <div className="player-area">
+          {/* Centered Player Name */}
+          <h2 className="centered-name">{playerName}</h2>
+
+          {/* Player tiles */}
+          <div className="player-tiles">
             {players.map((player, index) => (
               <div
                 key={index}
-                className={`player-card ${currentTurn === player.socketId ? 'active' : ''}`}
+                className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
               >
                 <h4>{player.name}</h4>
-                <p>Health: {player.health || 8}</p>
-                <p>Role: {player.socketId === socket.id ? role : 'Hidden'}</p>
+                <p>Health: {player.health}</p>
+                {/* Show role only for the current player's tile */}
+                {player.socketId === socket.id && <p>Role: {role}</p>}
               </div>
             ))}
           </div>
 
-          <div className="game-info">
-            <h2>Your Role: {role}</h2>
-            <h3>Your Name: {playerName}</h3>
+          {arrowsInPlay > 0 && (
+            <p>Arrows in Play: {arrowsInPlay}</p>
+          )}
+          {indianAttackActive && (
+            <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>
+          )}
 
-            {arrowsInPlay > 0 && <p>Arrows in Play: {arrowsInPlay}</p>}
-            {indianAttackActive && <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>}
-
+          {/* Show Roll Dice button only to the current player */}
+          {socket.id === currentTurn && (
             <button onClick={rollDice} className="button roll-button">
               Roll Dice 🎲
             </button>
+          )}
 
-            {diceResult && (
-              <div className="dice-result">
-                <p>{diceResult.player} rolled a {diceResult.result}</p>
-              </div>
-            )}
-          </div>
+          {diceResult && (
+            <div className="dice-result">
+              <p>{diceResult.player} rolled a {diceResult.result}</p>
+            </div>
+          )}
         </div>
       )}
     </div>
