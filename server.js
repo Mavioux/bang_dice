@@ -38,13 +38,20 @@ io.on('connection', (socket) => {
   socket.emit('testConnection', 'You are connected to the server!');
 
   // Join Game
-  socket.on('joinGame', (playerName) => {
-    players[socket.id] = { name: playerName, role: null, health: 8, arrows: 0, isAlive: true };
-    console.log(`🎮 ${playerName} joined the game.`);
-    io.emit('playerListUpdate', Object.values(players));
-  });
+socket.on('joinGame', (playerName) => {
+  players[socket.id] = { 
+    name: playerName, 
+    role: null, 
+    health: 8, 
+    arrows: 0, 
+    isAlive: true, 
+    socketId: socket.id // Add socket.id to the player object
+  };
+  console.log(`🎮 ${playerName} joined the game.`);
+  io.emit('playerListUpdate', Object.values(players));
+});
 
-  // Start Game & Assign Roles
+// Start Game & Assign Roles
 socket.on('startGame', () => {
   if (Object.keys(players).length < 4) {
     io.emit('gameError', 'Need at least 4 players to start the game.');
@@ -59,37 +66,36 @@ socket.on('startGame', () => {
 
   Object.keys(players).forEach((id, index) => {
     players[id].role = shuffledRoles[index];
-    io.to(id).emit('assignRole', { id, role: shuffledRoles[index] }); // Emit privately
+    io.to(id).emit('assignRole', { id, role: shuffledRoles[index] });
   });
 
   gameState.started = true;
   gameState.playerOrder = Object.keys(players);
-  gameState.currentTurn = gameState.playerOrder[0]; // Set the first player's turn
+  gameState.currentTurn = gameState.playerOrder[0];
 
-  // Notify all players of the current turn and game start
   io.emit('updateTurn', gameState.currentTurn);
-  io.emit('gameStarted', Object.values(players)); // Send the full players list to all clients
+  io.emit('gameStarted', Object.values(players));
 });
 
-  // Dice Roll
-  socket.on('rollDice', () => {
-    if (socket.id !== gameState.currentTurn) {
-      socket.emit('gameError', 'It is not your turn to roll the dice.');
-      return;
-    }
+// Dice Roll
+socket.on('rollDice', () => {
+  if (socket.id !== gameState.currentTurn) {
+    socket.emit('gameError', 'It is not your turn to roll the dice.');
+    return;
+  }
 
-    const diceResult = Math.floor(Math.random() * 6) + 1;
-    console.log(`🎲 Dice rolled by ${players[socket.id].name}: ${diceResult}`);
-    io.emit('diceResult', { player: players[socket.id].name, result: diceResult });
+  const diceResult = Math.floor(Math.random() * 6) + 1;
+  console.log(`🎲 Dice rolled by ${players[socket.id].name}: ${diceResult}`);
+  io.emit('diceResult', { player: players[socket.id].name, result: diceResult });
 
-    // Move to the next player's turn
-    const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
-    const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
-    gameState.currentTurn = gameState.playerOrder[nextIndex];
+  // Move to the next player's turn
+  const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
+  const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
+  gameState.currentTurn = gameState.playerOrder[nextIndex];
 
-    // Notify all players of the new turn
-    io.emit('updateTurn', gameState.currentTurn);
-  });
+  // Notify all players of the new turn
+  io.emit('updateTurn', gameState.currentTurn);
+});
 
   // Disconnect Handling
   socket.on('disconnect', () => {

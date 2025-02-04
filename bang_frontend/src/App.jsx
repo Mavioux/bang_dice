@@ -31,7 +31,7 @@ export default function App() {
     socket.on('gameStarted', (players) => {
       console.log('Game Started with Players:', players);
       setGameStarted(true);
-      setPlayers(players); // Update the players state
+      setPlayers(players);
     });
 
     // Handle current turn updates
@@ -110,18 +110,26 @@ export default function App() {
 
           {/* Player tiles */}
           <div className="player-tiles">
-            {players.map((player, index) => (
+          {players.map((player, index) => {
+            console.log(
+              `Player: ${player.name}, Socket ID: ${player.socketId}, Current Turn: ${currentTurn}`
+            );
+            console.log(
+              `Is ${player.name} the current player? ${player.socketId === currentTurn}`
+            );
+
+            return (
               <div
                 key={index}
                 className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
               >
                 <h4>{player.name}</h4>
                 <p>Health: {player.health}</p>
-                {/* Show role only for the current player's tile */}
                 {player.socketId === socket.id && <p>Role: {role}</p>}
               </div>
-            ))}
-          </div>
+            );
+          })}
+        </div>
 
           {arrowsInPlay > 0 && (
             <p>Arrows in Play: {arrowsInPlay}</p>

@@ -89,15 +89,9 @@ body {
   position: relative; /* Required for pseudo-element positioning */
 }
 
-.player-tile.active::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 5px;
-  background: linear-gradient(90deg, #ffa500, #ff8c00); /* Yellow-orange gradient */
-  border-radius: 10px 10px 0 0;
+.player-tile.active {
+  border: 2px solid #ffa500; /* Yellow-orange border */
+  box-shadow: 0 0 15px #ffa500; /* Glow effect */
 }
 
 .player-tile h4 {
