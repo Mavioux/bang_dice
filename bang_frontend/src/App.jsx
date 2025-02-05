@@ -4,6 +4,15 @@ import './styles.css';
 
 const socket = io('http://localhost:3000');
 
+// Utility function to reorder the players array so the current player is in the center
+const reorderPlayers = (players, currentPlayerId) => {
+  const currentPlayerIndex = players.findIndex((player) => player.socketId === currentPlayerId);
+  if (currentPlayerIndex === -1) return players; // Fallback: return the original array if the current player is not found
+
+  // Reorder the array so the current player is in the center
+  return reorderedPlayers;
+};
+
 export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [players, setPlayers] = useState([]);
@@ -80,6 +89,11 @@ export default function App() {
             placeholder="Enter your name"
             value={playerName}
             onChange={(e) => setPlayerName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                joinGame(); // Call the joinGame function when Enter is pressed
+              }
+            }}
             className="input-field"
           />
           <button onClick={joinGame} className="button join-button">
@@ -105,31 +119,31 @@ export default function App() {
         </div>
       ) : (
         <div className="game-container">
-          {/* Centered Player Name */}
-          <h2 className="centered-name">{playerName}</h2>
-
           {/* Player tiles */}
           <div className="player-tiles">
-          {players.map((player, index) => {
-            console.log(
-              `Player: ${player.name}, Socket ID: ${player.socketId}, Current Turn: ${currentTurn}`
-            );
-            console.log(
-              `Is ${player.name} the current player? ${player.socketId === currentTurn}`
-            );
+            {reorderPlayers(players, socket.id).map((player, index) => {
+              console.log(
+                `Player: ${player.name}, Socket ID: ${player.socketId}, Current Turn: ${currentTurn}`
+              );
+              console.log(
+                `Is ${player.name} the current player? ${player.socketId === currentTurn}`
+              );
 
-            return (
-              <div
-                key={index}
-                className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
-              >
-                <h4>{player.name}</h4>
-                <p>Health: {player.health}</p>
-                {player.socketId === socket.id && <p>Role: {role}</p>}
-              </div>
-            );
-          })}
-        </div>
+              return (
+                <div
+                  key={index}
+                  className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
+                >
+                  <h4>{player.name}</h4>
+                  <p>Health: {player.health}</p>
+                  {/* Show role for the current player or if the player is the Sheriff */}
+                  {(player.socketId === socket.id || player.role === 'Sheriff') && (
+                    <p>Role: {player.role}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
           {arrowsInPlay > 0 && (
             <p>Arrows in Play: {arrowsInPlay}</p>

@@ -51,6 +51,15 @@ socket.on('joinGame', (playerName) => {
   io.emit('playerListUpdate', Object.values(players));
 });
 
+// Utility function to shuffle an array
+const shuffleArray = (array) => {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+};
+
 // Start Game & Assign Roles
 socket.on('startGame', () => {
   if (Object.keys(players).length < 4) {
@@ -58,23 +67,43 @@ socket.on('startGame', () => {
     return;
   }
 
-  const shuffledRoles = [...roles];
-  for (let i = shuffledRoles.length - 1; i > 0; i--) {
+  const numPlayers = Object.keys(players).length;
+
+  // Slice the roles array to the number of players
+  const rolesForGame = roles.slice(0, numPlayers);
+
+  // Shuffle only the sliced roles
+  for (let i = rolesForGame.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [shuffledRoles[i], shuffledRoles[j]] = [shuffledRoles[j], shuffledRoles[i]];
+    [rolesForGame[i], rolesForGame[j]] = [rolesForGame[j], rolesForGame[i]];
   }
 
   Object.keys(players).forEach((id, index) => {
-    players[id].role = shuffledRoles[index];
-    io.to(id).emit('assignRole', { id, role: shuffledRoles[index] });
+    players[id].role = rolesForGame[index];
+    io.to(id).emit('assignRole', { id, role: rolesForGame[index] });
   });
 
   gameState.started = true;
-  gameState.playerOrder = Object.keys(players);
-  gameState.currentTurn = gameState.playerOrder[0];
 
+  // Convert players object to an array and shuffle it
+  const playersArray = Object.values(players);
+  const shuffledPlayers = shuffleArray(playersArray);
+
+  // Update playerOrder with the shuffled order
+  gameState.playerOrder = shuffledPlayers.map((player) => player.socketId);
+
+  // Find the Sheriff and set them as the current turn
+  const sheriff = shuffledPlayers.find((player) => player.role === 'Sheriff');
+  if (sheriff) {
+    gameState.currentTurn = sheriff.socketId;
+  } else {
+    // Fallback: If no Sheriff is found, use the first player
+    gameState.currentTurn = gameState.playerOrder[0];
+  }
+
+  // Notify all players of the current turn and game start
   io.emit('updateTurn', gameState.currentTurn);
-  io.emit('gameStarted', Object.values(players));
+  io.emit('gameStarted', shuffledPlayers); // Send the shuffled players array to all clients
 });
 
 // Dice Roll
