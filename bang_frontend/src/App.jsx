@@ -9,7 +9,16 @@ const reorderPlayers = (players, currentPlayerId) => {
   const currentPlayerIndex = players.findIndex((player) => player.socketId === currentPlayerId);
   if (currentPlayerIndex === -1) return players; // Fallback: return the original array if the current player is not found
 
-  // Reorder the array so the current player is in the center
+  // Calculate the number of players before and after the current player
+  const numPlayers = players.length;
+  const half = Math.floor(numPlayers / 2);
+  
+  const reorderedPlayers = [];
+  for (let i = 0; i < numPlayers; i++) {
+    const index = (currentPlayerIndex - half + i + numPlayers) % numPlayers;
+    reorderedPlayers.push(players[index]);
+  }
+
   return reorderedPlayers;
 };
 
