@@ -21,6 +21,7 @@ const PORT = process.env.PORT || 3000;
 // Game data
 const players = {}; // { socketId: { name, role, health, arrows, isAlive } }
 const gameState = { started: false, playerOrder: [], currentTurn: null };
+const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫']; // Emojis for dice symbols
 
 // Roles
 const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'Deputy', 'Renegade'];
@@ -107,23 +108,34 @@ socket.on('startGame', () => {
 });
 
 // Dice Roll
-socket.on('rollDice', () => {
+socket.on('rollDice', (keptDice = []) => {
   if (socket.id !== gameState.currentTurn) {
     socket.emit('gameError', 'It is not your turn to roll the dice.');
     return;
   }
 
-  const diceResult = Math.floor(Math.random() * 6) + 1;
-  console.log(`🎲 Dice rolled by ${players[socket.id].name}: ${diceResult}`);
-  io.emit('diceResult', { player: players[socket.id].name, result: diceResult });
+  const numDice = 6 - keptDice.length; // Number of dice to roll
+  const diceResult = [];
 
-  // Move to the next player's turn
-  const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
-  const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
-  gameState.currentTurn = gameState.playerOrder[nextIndex];
+  for (let i = 0; i < numDice; i++) {
+    const randomIndex = Math.floor(Math.random() * diceSymbols.length);
+    diceResult.push(diceSymbols[randomIndex]);
+  }
 
-  // Notify all players of the new turn
-  io.emit('updateTurn', gameState.currentTurn);
+  // Combine kept dice with new rolls
+  const finalDice = [...keptDice, ...diceResult];
+
+  // Automatically move dynamite to kept dice
+  const dynamiteCount = finalDice.filter((dice) => dice === '💣').length;
+  if (dynamiteCount >= 3) {
+    // If 3 or more dynamites, move all dice to kept dice
+    io.to(socket.id).emit('diceResult', finalDice);
+    io.to(socket.id).emit('updateKeptDice', finalDice);
+    io.to(socket.id).emit('disableReroll');
+  } else {
+    // Otherwise, send the dice result
+    io.to(socket.id).emit('diceResult', finalDice);
+  }
 });
 
   // Disconnect Handling

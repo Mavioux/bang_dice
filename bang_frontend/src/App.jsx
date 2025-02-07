@@ -12,7 +12,7 @@ const reorderPlayers = (players, currentPlayerId) => {
   // Calculate the number of players before and after the current player
   const numPlayers = players.length;
   const half = Math.floor(numPlayers / 2);
-  
+
   const reorderedPlayers = [];
   for (let i = 0; i < numPlayers; i++) {
     const index = (currentPlayerIndex - half + i + numPlayers) % numPlayers;
@@ -22,12 +22,17 @@ const reorderPlayers = (players, currentPlayerId) => {
   return reorderedPlayers;
 };
 
+// Dice symbols and emojis
+const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫'];
+
 export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [players, setPlayers] = useState([]);
   const [role, setRole] = useState(null);
   const [gameStarted, setGameStarted] = useState(false);
-  const [diceResult, setDiceResult] = useState(null);
+  const [diceResult, setDiceResult] = useState([]); // Current dice result
+  const [keptDice, setKeptDice] = useState([]); // Dice the player has chosen to keep
+  const [rerollsLeft, setRerollsLeft] = useState(2); // Number of rerolls left
   const [currentTurn, setCurrentTurn] = useState(null);
   const [arrowsInPlay, setArrowsInPlay] = useState(0);
   const [indianAttackActive, setIndianAttackActive] = useState(false);
@@ -58,7 +63,12 @@ export default function App() {
       setCurrentTurn(currentTurn);
     });
 
-    socket.on('diceResult', (data) => setDiceResult(data));
+    // Handle dice result
+    socket.on('diceResult', (result) => {
+      console.log('Dice Result:', result);
+      setDiceResult(result);
+    });
+
     socket.on('indianAttack', (isActive) => setIndianAttackActive(isActive));
     socket.on('updateArrows', (arrows) => setArrowsInPlay(arrows));
 
@@ -85,7 +95,37 @@ export default function App() {
   };
 
   const rollDice = () => {
-    socket.emit('rollDice');
+    if (socket.id !== currentTurn) return; // Only the current player can roll
+
+    if (rerollsLeft === 0) {
+      alert('No rerolls left!');
+      return;
+    }
+
+    // Emit the rollDice event with the kept dice
+    socket.emit('rollDice', keptDice);
+    setRerollsLeft(rerollsLeft - 1); // Decrease rerolls left
+  };
+
+  const endTurn = () => {
+    // Reset dice and rerolls for the next turn
+    setDiceResult([]);
+    setKeptDice([]);
+    setRerollsLeft(2);
+
+    // Notify the server to move to the next player's turn
+    socket.emit('endTurn');
+  };
+
+  const toggleKeepDice = (index) => {
+    const dice = diceResult[index];
+    if (keptDice.includes(dice)) {
+      // Remove the dice from keptDice
+      setKeptDice(keptDice.filter((d) => d !== dice));
+    } else {
+      // Add the dice to keptDice
+      setKeptDice([...keptDice, dice]);
+    }
   };
 
   return (
@@ -128,50 +168,69 @@ export default function App() {
         </div>
       ) : (
         <div className="game-container">
+          {/* Centered Player Name */}
+          <h2 className="centered-name">{playerName}</h2>
+
           {/* Player tiles */}
           <div className="player-tiles">
-            {reorderPlayers(players, socket.id).map((player, index) => {
-              console.log(
-                `Player: ${player.name}, Socket ID: ${player.socketId}, Current Turn: ${currentTurn}`
-              );
-              console.log(
-                `Is ${player.name} the current player? ${player.socketId === currentTurn}`
-              );
-
-              return (
-                <div
-                  key={index}
-                  className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
-                >
-                  <h4>{player.name}</h4>
-                  <p>Health: {player.health}</p>
-                  {/* Show role for the current player or if the player is the Sheriff */}
-                  {(player.socketId === socket.id || player.role === 'Sheriff') && (
-                    <p>Role: {player.role}</p>
-                  )}
-                </div>
-              );
-            })}
+            {reorderPlayers(players, socket.id).map((player, index) => (
+              <div
+                key={index}
+                className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
+              >
+                <h4>{player.name}</h4>
+                <p>Health: {player.health}</p>
+                {(player.socketId === socket.id || player.role === 'Sheriff') && (
+                  <p>Role: {player.role}</p>
+                )}
+              </div>
+            ))}
           </div>
+
+          {/* Dice Rolling Section */}
+          {socket.id === currentTurn && (
+            <div className="dice-section">
+              <h3>Your Dice</h3>
+              <div className="dice-columns">
+                <div className="dice-column">
+                  <h4>Rolled Dice</h4>
+                  {diceResult.map((dice, index) => (
+                    <div
+                      key={index}
+                      className={`dice ${keptDice.includes(dice) ? 'kept' : ''}`}
+                      onClick={() => toggleKeepDice(index)}
+                    >
+                      {dice}
+                    </div>
+                  ))}
+                </div>
+                <div className="dice-column">
+                  <h4>Kept Dice</h4>
+                  {keptDice.map((dice, index) => (
+                    <div
+                      key={index}
+                      className="dice kept"
+                      onClick={() => toggleKeepDice(index)}
+                    >
+                      {dice}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="dice-actions">
+                <button onClick={rollDice} disabled={rerollsLeft === 0}>
+                  Roll ({rerollsLeft} rerolls left)
+                </button>
+                <button onClick={endTurn}>End Turn</button>
+              </div>
+            </div>
+          )}
 
           {arrowsInPlay > 0 && (
             <p>Arrows in Play: {arrowsInPlay}</p>
           )}
           {indianAttackActive && (
             <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>
-          )}
-
-          {/* Show Roll Dice button only to the current player */}
-          {socket.id === currentTurn && (
-            <button onClick={rollDice} className="button roll-button">
-              Roll Dice 🎲
-            </button>
-          )}
-
-          {diceResult && (
-            <div className="dice-result">
-              <p>{diceResult.player} rolled a {diceResult.result}</p>
-            </div>
           )}
         </div>
       )}
