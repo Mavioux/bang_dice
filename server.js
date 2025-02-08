@@ -11,9 +11,11 @@ app.use(cors());
 
 const io = new Server(server, {
   cors: {
-    origin: 'http://localhost:5173', // Replace with your frontend URL
-    methods: ['GET', 'POST'],
+    origin: 'http://localhost:5173',
+    methods: ['GET', 'POST']
   },
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 const PORT = process.env.PORT || 3000;
@@ -24,12 +26,12 @@ const ARROW_SYMBOL = '🏹';
 const DYNAMITE_SYMBOL = '💣';
 const PLAYER_BASE_HEALTH = 8;
 const SHERIFF_EXTRA_HEALTH = 2;
-
-// Game data
+const QUESTION_MARK_SYMBOL = '❓';
+const GUN_SYMBOL = '🔫';
 const players = {}; // { socketId: { name, role, health, arrows, isAlive } }
 const gameState = { 
-  started: false, 
-  playerOrder: [], 
+  started: false,
+  playerOrder: [],  
   currentTurn: null,
   diceStates: {},
   rerollsLeft: 3,  // Add initial rerolls count
@@ -68,10 +70,8 @@ const countTotalDynamites = (dice) => {
 const onlyDynamitesLeftToResolve = (dice, states) => {
   const unresolved = Object.entries(states)
     .filter(([_, state]) => state !== 'resolved');
-  
   const unresolvedDynamites = unresolved
     .filter(([index]) => dice[index] === DYNAMITE_SYMBOL);
-
   return unresolvedDynamites.length > 0 && 
          unresolvedDynamites.length === unresolved.length;
 };
@@ -92,13 +92,11 @@ const updatePlayerHealth = (playerId, change) => {
     console.log(`Cannot update health`);
     return false;
   }
-
   console.log(`Updating health for ${player.name} (${playerId}) by ${change}`);
   const newHealth = Math.min(Math.max(0, player.health + change), player.maxHealth);
   player.health = newHealth;
   player.isAlive = newHealth > 0;
   broadcastHealthUpdates(io);
-  
   emitGameLog(io, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
   
   return true;
@@ -144,7 +142,6 @@ const handleArrowRoll = (dice, states, playerId) => {
 
   // Count how many arrows will trigger indian attack
   const arrowsUntilEmpty = Math.min(arrowCount, gameState.arrowsOnBoard);
-  
   // Add arrows to current player
   players[playerId].arrows += arrowsUntilEmpty;
   gameState.arrowsOnBoard -= arrowsUntilEmpty;
@@ -158,16 +155,15 @@ const handleArrowRoll = (dice, states, playerId) => {
         player.arrows = 0;  // Reset arrows after damage
       }
     });
-    
     // Reset board arrows
     gameState.arrowsOnBoard = TOTAL_ARROWS;
+  }
 
-    // Handle remaining arrows from current roll
-    const remainingArrows = arrowCount - arrowsUntilEmpty;
-    if (remainingArrows > 0) {
-      players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
-      gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
-    }
+  // Handle remaining arrows from current roll
+  const remainingArrows = arrowCount - arrowsUntilEmpty;
+  if (remainingArrows > 0) {
+    players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
+    gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
   }
 
   broadcastArrowState();
@@ -189,210 +185,265 @@ const emitGameLog = (io, message) => {
   io.emit('gameLog', message);
 };
 
+// Add new helper function to check for gatling condition
+const checkGatlingAvailable = (dice, states) => {
+  const keptGuns = Object.entries(states).filter(([index, state]) => 
+    dice[index] === GUN_SYMBOL && state === 'kept'
+  ).length;
+  return keptGuns >= 3;
+};
+
+// Update the handleGatling function to ensure it only uses exactly 3 guns when resolving a gatling
+const handleGatling = (playerId, dice, states) => {
+  // Find indices of all kept gun dice in order of appearance
+  const keptGunIndices = Object.entries(dice)
+    .map(([index, value], originalIndex) => ({ index: Number(index), value, originalIndex }))
+    .filter(({ index, value }) => 
+      value === GUN_SYMBOL && states[index] === 'kept'
+    )
+    .sort((a, b) => a.originalIndex - b.originalIndex) // Sort by original order
+    .map(({ index }) => index)
+    .slice(0, 2);  // Take exactly first 3 guns
+
+  // Create new states object with resolved guns
+  const newStates = { ...states };
+  keptGunIndices.forEach(index => {
+    newStates[index] = 'resolved';
+  });
+
+  // Deal damage to all other players
+  Object.values(players).forEach(player => {
+    if (player.socketId !== playerId && player.isAlive) {
+      updatePlayerHealth(player.socketId, -1);
+    }
+  });
+
+  // Return arrows to the pile
+  if (players[playerId].arrows > 0) {
+    gameState.arrowsOnBoard += players[playerId].arrows;
+    players[playerId].arrows = 0;
+    broadcastArrowState();
+    emitGameLog(io, `${players[playerId].name} returned all arrows to the pile`);
+  }
+
+  return newStates;
+};
+
 // Handle Socket.io connections
 io.on('connection', (socket) => {
   console.log(`🔌 A user connected: ${socket.id}`);
-
+  
   // Test emit to confirm connection
   socket.emit('testConnection', 'You are connected to the server!');
 
   // Join Game
-socket.on('joinGame', (playerName) => {
-  players[socket.id] = { 
-    name: playerName, 
-    role: null, 
-    health: PLAYER_BASE_HEALTH,
-    maxHealth: PLAYER_BASE_HEALTH, // Store max health
-    arrows: 0,  // Initialize arrow count
-    isAlive: true, 
-    socketId: socket.id // Add socket.id to the player object
-  };
-  console.log(`🎮 ${playerName} joined the game.`);
-  io.emit('playerListUpdate', Object.values(players));
-});
+  socket.on('joinGame', (playerName) => {
+    players[socket.id] = { 
+      name: playerName,
+      role: null,
+      health: PLAYER_BASE_HEALTH,
+      maxHealth: PLAYER_BASE_HEALTH, // Store max health
+      arrows: 0,  // Initialize arrow count
+      isAlive: true,
+      socketId: socket.id // Add socket.id to the player object
+    };
+    console.log(`🎮 ${playerName} joined the game.`);
+    io.emit('playerListUpdate', Object.values(players));
+  });
 
-// Start Game & Assign Roles
-socket.on('startGame', () => {
-  if (Object.keys(players).length < 4) {
-    io.emit('gameError', 'Need at least 4 players to start the game.');
-    return;
-  }
-
-  const numPlayers = Object.keys(players).length;
-
-  // Slice the roles array to the number of players
-  const rolesForGame = roles.slice(0, numPlayers);
-
-  // Shuffle only the sliced roles
-  for (let i = rolesForGame.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [rolesForGame[i], rolesForGame[j]] = [rolesForGame[j], rolesForGame[i]];
-  }
-
-  Object.keys(players).forEach((id, index) => {
-    players[id].role = rolesForGame[index];
-    // If player is Sheriff, add extra health
-    if (rolesForGame[index] === 'Sheriff') {
-      players[id].health += SHERIFF_EXTRA_HEALTH;
-      players[id].maxHealth += SHERIFF_EXTRA_HEALTH;
+  // Start Game & Assign Roles
+  socket.on('startGame', () => {
+    if (Object.keys(players).length < 4) {
+      io.emit('gameError', 'Need at least 4 players to start the game.');
+      return;
     }
-    io.to(id).emit('assignRole', { 
-      id, 
-      role: rolesForGame[index]
+
+    const numPlayers = Object.keys(players).length;
+
+    // Slice the roles array to the number of players
+    const rolesForGame = roles.slice(0, numPlayers);
+
+    // Shuffle only the sliced roles
+    for (let i = rolesForGame.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [rolesForGame[i], rolesForGame[j]] = [rolesForGame[j], rolesForGame[i]];
+    }
+
+    Object.keys(players).forEach((id, index) => {
+      players[id].role = rolesForGame[index];
+      // If player is Sheriff, add extra health
+      if (rolesForGame[index] === 'Sheriff') {
+        players[id].health += SHERIFF_EXTRA_HEALTH;
+        players[id].maxHealth += SHERIFF_EXTRA_HEALTH;
+      }
+      io.to(id).emit('assignRole', { 
+        id, 
+        role: rolesForGame[index]
+      });
+    });
+
+    // Broadcast initial health states to all players
+    broadcastHealthUpdates(io);
+
+    gameState.started = true;
+
+    // Convert players object to an array and shuffle it
+    const playersArray = Object.values(players);
+    const shuffledPlayers = shuffleArray(playersArray);
+
+    // Update playerOrder with the shuffled order
+    gameState.playerOrder = shuffledPlayers.map((player) => player.socketId);
+
+    // Find the Sheriff and set them as the current turn
+    const sheriff = shuffledPlayers.find((player) => player.role === 'Sheriff');
+    if (sheriff) {
+      gameState.currentTurn = sheriff.socketId;
+    } else {
+      // Fallback: If no Sheriff is found, use the first player
+      gameState.currentTurn = gameState.playerOrder[0];
+    }
+
+    // Notify all players of the current turn and game start
+    io.emit('updateTurn', gameState.currentTurn);
+    io.emit('gameStarted', shuffledPlayers); // Send the shuffled players array to all clients
+  });
+
+  // Modify the rollDice handler
+  socket.on('rollDice', (keptDiceData = {}) => {
+    if (socket.id !== gameState.currentTurn) {
+      socket.emit('gameError', 'It is not your turn to roll the dice.');
+      return;
+    }
+
+    // Check rerolls and dynamites before proceeding
+    if (gameState.rerollsLeft <= 0 || checkDynamiteEnd(gameState.currentDice, gameState.diceStates)) {
+      socket.emit('gameError', 'Cannot roll - either no rerolls left or dynamites exploded!');
+      return;
+    }
+
+    // Decrease rerolls first
+    gameState.rerollsLeft--;
+
+    const diceResult = [];
+    const newDiceStates = {};
+    
+    // Log kept dice if any
+    if (Object.keys(keptDiceData.dice).length > 0) {
+      const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
+      emitGameLog(io, `${players[socket.id].name} kept: ${keptDiceSymbols}`);
+    }
+
+    // Handle kept dice first
+    Object.entries(keptDiceData.dice).forEach(([index, value]) => {
+      diceResult.push(value);
+      newDiceStates[diceResult.length - 1] = keptDiceData.states[index];
+    });
+
+    // Add new rolled dice
+    const numNewDice = 6 - diceResult.length;
+    for (let i = 0; i < numNewDice; i++) {
+      const randomIndex = Math.floor(Math.random() * diceSymbols.length);
+      const rolledValue = diceSymbols[randomIndex];
+      diceResult.push(rolledValue);
+      
+      // Automatically resolve dynamites
+      newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'resolved' : 'rolled';
+    }
+
+    // Log new roll
+    const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
+    emitGameLog(io, `${players[socket.id].name} rolled: ${newDiceSymbols}`);
+
+    // Store current dice state
+    gameState.currentDice = diceResult;
+    gameState.diceStates = newDiceStates;
+
+    // Handle arrows right after rolling, passing the new dice states
+    handleArrowRoll(diceResult, newDiceStates, socket.id);
+
+    // Check dynamite damage only if not already dealt this turn
+    if (!gameState.dynamiteDamageDealt && countResolvedDynamites(diceResult, newDiceStates) >= 3) {
+      updatePlayerHealth(gameState.currentTurn, -1);
+      gameState.dynamiteDamageDealt = true;
+      gameState.rerollsLeft = 0; // Force end of rolling
+      emitGameLog(io, `💥 ${players[socket.id].name} was hit by dynamite explosion!`);
+    }
+
+    // Emit updated game state
+    io.emit('diceResult', {
+      dice: diceResult,
+      states: newDiceStates,
+      currentPlayer: socket.id,
+      rerollsLeft: gameState.rerollsLeft
+    });
+
+    // Check if turn should end (all dice resolved and no rerolls left)
+    if (gameState.rerollsLeft === 0 && checkAllDiceResolved(gameState.diceStates)) {
+      progressToNextTurn(io);
+    }
+  });
+
+  // Simplified dice selection update handler
+  socket.on('updateKeptDice', (data) => {
+    if (socket.id !== gameState.currentTurn) {
+      socket.emit('gameError', 'It is not your turn to manage dice.');
+      return;
+    }
+
+    io.emit('keptDiceUpdate', {
+      indices: data.indices,
+      currentPlayer: socket.id
     });
   });
 
-  // Broadcast initial health states to all players
-  broadcastHealthUpdates(io);
-
-  gameState.started = true;
-
-  // Convert players object to an array and shuffle it
-  const playersArray = Object.values(players);
-  const shuffledPlayers = shuffleArray(playersArray);
-
-  // Update playerOrder with the shuffled order
-  gameState.playerOrder = shuffledPlayers.map((player) => player.socketId);
-
-  // Find the Sheriff and set them as the current turn
-  const sheriff = shuffledPlayers.find((player) => player.role === 'Sheriff');
-  if (sheriff) {
-    gameState.currentTurn = sheriff.socketId;
-  } else {
-    // Fallback: If no Sheriff is found, use the first player
-    gameState.currentTurn = gameState.playerOrder[0];
-  }
-
-  // Notify all players of the current turn and game start
-  io.emit('updateTurn', gameState.currentTurn);
-  io.emit('gameStarted', shuffledPlayers); // Send the shuffled players array to all clients
-});
-
-// Modify the rollDice handler
-socket.on('rollDice', (keptDiceData = {}) => {
-  if (socket.id !== gameState.currentTurn) {
-    socket.emit('gameError', 'It is not your turn to roll the dice.');
-    return;
-  }
-
-  // Check rerolls and dynamites before proceeding
-  if (gameState.rerollsLeft <= 0 || checkDynamiteEnd(gameState.currentDice, gameState.diceStates)) {
-    socket.emit('gameError', 'Cannot roll - either no rerolls left or dynamites exploded!');
-    return;
-  }
-
-  // Decrease rerolls first
-  gameState.rerollsLeft--;
-
-  const diceResult = [];
-  const newDiceStates = {};
-  
-  // Log kept dice if any
-  if (Object.keys(keptDiceData.dice).length > 0) {
-    const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
-    emitGameLog(io, `${players[socket.id].name} kept: ${keptDiceSymbols}`);
-  }
-
-  // Handle kept dice first
-  Object.entries(keptDiceData.dice).forEach(([index, value]) => {
-    diceResult.push(value);
-    newDiceStates[diceResult.length - 1] = keptDiceData.states[index];
-  });
-
-  // Add new rolled dice
-  const numNewDice = 6 - diceResult.length;
-  for (let i = 0; i < numNewDice; i++) {
-    const randomIndex = Math.floor(Math.random() * diceSymbols.length);
-    const rolledValue = diceSymbols[randomIndex];
-    diceResult.push(rolledValue);
-    
-    // Automatically resolve dynamites
-    newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'resolved' : 'rolled';
-  }
-
-  // Log new roll
-  const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
-  emitGameLog(io, `${players[socket.id].name} rolled: ${newDiceSymbols}`);
-
-  // Store current dice state
-  gameState.currentDice = diceResult;
-  gameState.diceStates = newDiceStates;
-
-  // Handle arrows right after rolling, passing the new dice states
-  handleArrowRoll(diceResult, newDiceStates, socket.id);
-
-  // Check dynamite damage only if not already dealt this turn
-  if (!gameState.dynamiteDamageDealt && countResolvedDynamites(diceResult, newDiceStates) >= 3) {
-    updatePlayerHealth(gameState.currentTurn, -1);
-    gameState.dynamiteDamageDealt = true;
-    gameState.rerollsLeft = 0; // Force end of rolling
-    emitGameLog(io, `💥 ${players[socket.id].name} was hit by dynamite explosion!`);
-  }
-
-  // Emit updated game state
-  io.emit('diceResult', {
-    dice: diceResult,
-    states: newDiceStates,
-    currentPlayer: socket.id,
-    rerollsLeft: gameState.rerollsLeft
-  });
-
-  // Check if turn should end (all dice resolved and no rerolls left)
-  if (gameState.rerollsLeft === 0 && checkAllDiceResolved(gameState.diceStates)) {
+  // Add state reset to end turn handler
+  socket.on('endTurn', () => {
+    if (socket.id !== gameState.currentTurn) return;
     progressToNextTurn(io);
-  }
-});
-
-// Simplified dice selection update handler
-socket.on('updateKeptDice', (data) => {
-  if (socket.id !== gameState.currentTurn) {
-    socket.emit('gameError', 'It is not your turn to manage dice.');
-    return;
-  }
-
-  io.emit('keptDiceUpdate', {
-    indices: data.indices,
-    currentPlayer: socket.id
-  });
-});
-
-// Add state reset to end turn handler
-socket.on('endTurn', () => {
-  if (socket.id !== gameState.currentTurn) return;
-  progressToNextTurn(io);
-});
-
-// Simplify updateDiceStates handler
-socket.on('updateDiceStates', (data) => {
-  if (socket.id !== gameState.currentTurn) {
-    socket.emit('gameError', 'It is not your turn to manage dice.');
-    return;
-  }
-
-  const newStates = { ...gameState.diceStates, ...data.states };
-  gameState.diceStates = newStates;
-
-  // Only check if we need to end rolling, don't apply damage here
-  if (countResolvedDynamites(gameState.currentDice, newStates) >= 3) {
-    gameState.rerollsLeft = 0;
-  }
-
-  io.emit('diceStateUpdate', {
-    states: newStates,
-    currentPlayer: socket.id
   });
 
-  if (checkAllDiceResolved(newStates)) {
-    progressToNextTurn(io);
-  }
-});
+  // Simplify updateDiceStates handler
+  socket.on('updateDiceStates', (data) => {
+    if (socket.id !== gameState.currentTurn) {
+      socket.emit('gameError', 'It is not your turn to manage dice.');
+      return;
+    }
 
-// Disconnect Handling
-socket.on('disconnect', () => {
-  console.log(`❌ User disconnected: ${socket.id}`);
-  delete players[socket.id];
-  io.emit('playerListUpdate', Object.values(players));
-});
+    let newStates = { ...gameState.diceStates, ...data.states };
+
+    // Check if this update includes resolving a gun and if gatling is available
+    const isResolvingGun = Object.entries(data.states).some(([index, state]) => 
+      gameState.currentDice[index] === GUN_SYMBOL && state === 'resolved'
+    );
+
+    if (isResolvingGun && checkGatlingAvailable(gameState.currentDice, gameState.diceStates)) {
+      newStates = handleGatling(socket.id, gameState.currentDice, newStates);
+      emitGameLog(io, `💥 ${players[socket.id].name} fired the Gatling Gun!`);
+    }
+
+    gameState.diceStates = newStates;
+
+    // Only check if we need to end rolling
+    if (countResolvedDynamites(gameState.currentDice, newStates) >= 3) {
+      gameState.rerollsLeft = 0;
+    }
+
+    io.emit('diceStateUpdate', {
+      states: newStates,
+      currentPlayer: socket.id
+    });
+
+    if (checkAllDiceResolved(newStates)) {
+      progressToNextTurn(io);
+    }
+  });
+
+  // Disconnect Handling
+  socket.on('disconnect', () => {
+    console.log(`❌ User disconnected: ${socket.id}`);
+    delete players[socket.id];
+    io.emit('playerListUpdate', Object.values(players));
+  });
 });
 
 // Start the server
@@ -412,26 +463,23 @@ const progressToNextTurn = (io) => {
   const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
   const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
   gameState.currentTurn = gameState.playerOrder[nextIndex];
-  
-  // Roll initial dice for new player
-  const initialDice = [];
+
+  // Initialize all dice as question marks with 'initial' state
+  const initialDice = Array(6).fill(QUESTION_MARK_SYMBOL);
   const initialStates = {};
   
-  // Roll all 6 dice for the new player
+  // Set all dice to 'initial' state
   for (let i = 0; i < 6; i++) {
-    const randomIndex = Math.floor(Math.random() * diceSymbols.length);
-    initialDice.push(diceSymbols[randomIndex]);
-    initialStates[i] = 'rolled';
+    initialStates[i] = 'initial';
   }
 
-  // Update game state with initial dice
   gameState.diceStates = initialStates;
-  broadcastArrowState();  // Ensure arrow state is synced on turn change
+  gameState.currentDice = initialDice;
+  broadcastArrowState();
 
   const nextPlayer = players[gameState.playerOrder[nextIndex]];
   emitGameLog(io, `🎲 Turn changed to ${nextPlayer.name}`);
   
-  // Emit turn update and initial dice roll
   io.emit('updateTurn', gameState.currentTurn);
   io.emit('diceResult', {
     dice: initialDice,

@@ -2,9 +2,14 @@ import { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import './styles.css';
 
-const socket = io('http://localhost:3000');
+const socket = io('http://localhost:3000', {
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
 
 const DICE_STATES = {
+  INITIAL: 'initial',
   ROLLED: 'rolled',
   KEPT: 'kept',
   RESOLVED: 'resolved'
@@ -141,6 +146,46 @@ export default function App() {
     }
   }, [rerollsLeft, diceResult, diceStates]);
 
+  useEffect(() => {
+    const handleConnect = () => {
+      console.log('Connected to server');
+    };
+
+    const handleDisconnect = () => {
+      console.log('Disconnected from server');
+    };
+
+    const handleReconnect = () => {
+      console.log('Reconnected to server');
+      // Refresh game state if needed
+      if (gameStarted) {
+        socket.emit('requestGameState');
+      }
+    };
+
+    const handleError = (error) => {
+      console.error('Socket error:', error);
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('reconnect', handleReconnect);
+    socket.on('error', handleError);
+
+    // Add this new handler
+    socket.on('connect_error', (error) => {
+      console.log('Connection error:', error);
+    });
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('reconnect', handleReconnect);
+      socket.off('error', handleError);
+      socket.off('connect_error');
+    };
+  }, [gameStarted]);
+
   const joinGame = () => {
     if (playerName.trim() !== '') {
       socket.emit('joinGame', playerName);
@@ -178,12 +223,21 @@ export default function App() {
 
   const DYNAMITE_SYMBOL = '💣';
 
+  // Add new helper function to check for gatling
+  const checkGatlingAvailable = (dice, states) => {
+    const keptGuns = Object.entries(states).filter(([index, state]) => 
+      dice[index] === '🔫' && state === DICE_STATES.KEPT
+    ).length;
+    return keptGuns >= 3;
+  };
+
+  // Update the toggleDiceState function with fixed gun resolution logic
   const toggleDiceState = (index, reverse = false) => {
     if (socket.id !== currentTurn) return;
+    if (diceStates[index] === DICE_STATES.INITIAL) return;
   
     const currentState = diceStates[index] || DICE_STATES.ROLLED;
     
-    // Handle reverse action
     if (reverse) {
       if (currentState !== DICE_STATES.KEPT) return;
       const newDiceStates = {
@@ -193,6 +247,24 @@ export default function App() {
       setDiceStates(newDiceStates);
       socket.emit('updateDiceStates', { states: newDiceStates });
       return;
+    }
+  
+    // Modified gun resolution logic
+    if (currentState === DICE_STATES.KEPT && diceResult[index] === '🔫') {
+      const keptGuns = Object.entries(diceStates).filter(([i, state]) => 
+        diceResult[i] === '🔫' && state === DICE_STATES.KEPT
+      ).length;
+  
+      // If we have 3 or more kept guns, only allow resolution as part of gatling
+      if (keptGuns >= 3) {
+        const newDiceStates = { 
+          ...diceStates,
+          [index]: DICE_STATES.RESOLVED 
+        };
+        setDiceStates(newDiceStates);
+        socket.emit('updateDiceStates', { states: newDiceStates });
+        return;
+      }
     }
   
     // Normal state progression
@@ -262,6 +334,38 @@ export default function App() {
     </div>
   );
 
+  // Add visual indicator for available gatling
+  const renderDice = (dice, index) => (
+    <div key={index} className="dice-container">
+      <div
+        className={`dice ${diceStates[index]} ${
+          dice === '🔫' && 
+          diceStates[index] === DICE_STATES.KEPT && 
+          checkGatlingAvailable(diceResult, diceStates) ? 'gatling-ready' : ''
+        }`}
+        onClick={() => socket.id === currentTurn && diceStates[index] !== DICE_STATES.INITIAL && toggleDiceState(index)}
+        style={{ cursor: socket.id === currentTurn && diceStates[index] !== DICE_STATES.INITIAL ? 'pointer' : 'default' }}
+      >
+        {dice}
+      </div>
+      {/* Only show reverse button for non-dynamite kept dice */}
+      {diceStates[index] === DICE_STATES.KEPT && 
+      dice !== DYNAMITE_SYMBOL && 
+      socket.id === currentTurn && (
+        <button
+          className="reverse-button"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleDiceState(index, true);
+          }}
+          title="Reverse to rolled state"
+        >
+          ↩️
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className={`app-container ${gameStarted ? 'game-started' : ''}`}>
       {!gameStarted ? (
@@ -316,32 +420,7 @@ export default function App() {
             <div className="dice-section">
               <h3>{socket.id === currentTurn ? 'Your Dice' : `${players.find(p => p.socketId === currentTurn)?.name}'s Dice`}</h3>
               <div className="dice-column">
-                {diceResult.map((dice, index) => (
-                  <div key={index} className="dice-container">
-                    <div
-                      className={`dice ${diceStates[index]}`}
-                      onClick={() => socket.id === currentTurn && toggleDiceState(index)}
-                      style={{ cursor: socket.id === currentTurn ? 'pointer' : 'default' }}
-                    >
-                      {dice}
-                    </div>
-                    {/* Only show reverse button for non-dynamite kept dice */}
-                    {diceStates[index] === DICE_STATES.KEPT && 
-                    dice !== DYNAMITE_SYMBOL && 
-                    socket.id === currentTurn && (
-                      <button
-                        className="reverse-button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleDiceState(index, true);
-                        }}
-                        title="Reverse to rolled state"
-                      >
-                        ↩️
-                      </button>
-                    )}
-                  </div>
-                ))}
+                {diceResult.map((dice, index) => renderDice(dice, index))}
               </div>
               {socket.id === currentTurn && (
                 <div className="dice-actions">

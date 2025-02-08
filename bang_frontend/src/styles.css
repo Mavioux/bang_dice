@@ -129,7 +129,7 @@ body {
 .player-tile .role-text {
   margin: 5px 0 0;
   font-size: 1.2em;
-  color: #f2f0e6; /* Golden color for the role */
+  color: #f2f0e6; /* White color for the role */
   font-weight: bold;
 }
 
@@ -189,6 +189,24 @@ body {
   color: white;
   opacity: 0.8;
   cursor: not-allowed;
+}
+
+.dice.initial {
+  border-color: #666;
+  background-color: #444;
+  color: #fff;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.dice.gatling-ready {
+  border-color: #ff9800;
+  box-shadow: 0 0 10px rgba(255, 152, 0, 0.5);
+}
+
+.dice.gatling-ready:hover {
+  border-color: #ff5722;
+  box-shadow: 0 0 15px rgba(255, 87, 34, 0.7);
 }
 
 .dice-actions {
