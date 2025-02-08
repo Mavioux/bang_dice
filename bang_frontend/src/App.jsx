@@ -80,25 +80,10 @@ export default function App() {
     socket.on('diceResult', (data) => {
       console.log('Dice Result:', data);
       setDiceResult(data.dice);
-      
-      // Reconstruct dice states using original indices
-      const newDiceStates = { ...data.states };
-      if (data.originalIndices) {
-        Object.entries(data.originalIndices).forEach(([newIndex, oldIndex]) => {
-          if (diceStates[oldIndex] === DICE_STATES.KEPT || 
-              diceStates[oldIndex] === DICE_STATES.RESOLVED) {
-            newDiceStates[newIndex] = diceStates[oldIndex];
-          }
-        });
-      }
-      
-      setDiceStates(newDiceStates);
+      setDiceStates(data.states);
       setRerollsLeft(data.rerollsLeft);
       
-      if (data.currentPlayer !== socket.id) {
-        setKeptDice([]);
-        setKeptIndices(new Set());
-      }
+      // Remove the dynamite alert code
     });
 
     socket.on('indianAttack', (isActive) => setIndianAttackActive(isActive));
@@ -115,7 +100,7 @@ export default function App() {
       setDiceStates(data.states);
     });
 
-    // Add new health update listener
+    // Update health listener to handle visual updates
     socket.on('updateHealth', (healthData) => {
       setPlayers(currentPlayers => {
         const updatedPlayers = [...currentPlayers];
@@ -207,6 +192,47 @@ export default function App() {
 
   const DYNAMITE_SYMBOL = '💣';
 
+  // Add helper function
+  const onlyDynamitesLeftToResolve = () => {
+    let hasUnresolvedDynamites = false;
+    let hasOtherUnresolvedDice = false;
+
+    diceResult.forEach((dice, index) => {
+      const isDynamite = dice === DYNAMITE_SYMBOL;
+      const isKept = diceStates[index] === DICE_STATES.KEPT;
+      const isResolved = diceStates[index] === DICE_STATES.RESOLVED;
+
+      if (isDynamite && isKept) {
+        hasUnresolvedDynamites = true;
+      } else if (!isResolved && (!isDynamite || !isKept)) {
+        hasOtherUnresolvedDice = true;
+      }
+    });
+
+    return hasUnresolvedDynamites && !hasOtherUnresolvedDice;
+  };
+
+  // Add helper function to check if dynamite can be resolved
+  const canResolveDynamite = (index) => {
+    if (diceResult[index] !== DYNAMITE_SYMBOL) return true;
+    
+    // Count dice by type and state
+    let unresolved = 0;
+    let unresolvedDynamites = 0;
+    
+    diceResult.forEach((dice, i) => {
+      if (diceStates[i] !== DICE_STATES.RESOLVED) {
+        unresolved++;
+        if (dice === DYNAMITE_SYMBOL) {
+          unresolvedDynamites++;
+        }
+      }
+    });
+
+    // Can resolve if only dynamites are left unresolved
+    return unresolved === unresolvedDynamites;
+  };
+
   const toggleDiceState = (index, reverse = false) => {
     if (socket.id !== currentTurn) return;
 
@@ -224,9 +250,9 @@ export default function App() {
       return;
     }
 
-    // Normal state progression
+    // Check if dynamite can be resolved
     if (diceResult[index] === DYNAMITE_SYMBOL && 
-        diceStates[index] === DICE_STATES.KEPT) {
+        !canResolveDynamite(index)) {
       return;
     }
 

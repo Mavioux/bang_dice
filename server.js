@@ -26,7 +26,8 @@ const gameState = {
   currentTurn: null,
   diceStates: {},
   rerollsLeft: 3,  // Add initial rerolls count
-  currentDice: []  // Add this to track current dice
+  currentDice: [],  // Add this to track current dice
+  resolvedDynamites: 0  // Add counter for resolved dynamites
 };
 const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫']; // Emojis for dice symbols
 
@@ -84,6 +85,7 @@ const progressToNextTurn = (io) => {
   gameState.diceStates = {};
   gameState.rerollsLeft = 3; // Reset to initial value
   gameState.currentDice = [];
+  gameState.resolvedDynamites = 0;  // Reset dynamite counter
   
   // Find next player's turn
   const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
@@ -223,7 +225,7 @@ socket.on('rollDice', (keptDiceData = {}) => {
     const rolledValue = diceSymbols[randomIndex];
     diceResult.push(rolledValue);
     
-    // Automatically keep dynamites
+    // Automatically keep dynamites (but don't resolve)
     newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'kept' : 'rolled';
   }
 
@@ -320,7 +322,12 @@ const autoResolveDynamites = (dice, states) => {
 // Add helper function for health management
 const updatePlayerHealth = (playerId, change) => {
   const player = players[playerId];
-  if (!player) return false;
+  if (!player) {
+    console.log(`Cannot Updating health`);
+    return false;
+  }
+
+  console.log(`Updating health for ${player.name} (${playerId}) by ${change}`);
 
   const newHealth = Math.min(Math.max(0, player.health + change), player.maxHealth);
   player.health = newHealth;
@@ -331,12 +338,74 @@ const updatePlayerHealth = (playerId, change) => {
   return true;
 };
 
-  // Disconnect Handling
-  socket.on('disconnect', () => {
-    console.log(`❌ User disconnected: ${socket.id}`);
-    delete players[socket.id];
-    io.emit('playerListUpdate', Object.values(players));
+// Add new helper function
+const onlyDynamitesLeftToResolve = (dice, states) => {
+  let hasUnresolvedDynamites = false;
+  let hasOtherUnresolvedDice = false;
+
+  Object.entries(states).forEach(([index, state]) => {
+    const isDynamite = dice[index] === DYNAMITE_SYMBOL;
+    const isKept = state === 'kept';
+    const isResolved = state === 'resolved';
+
+    if (isDynamite && isKept) {
+      hasUnresolvedDynamites = true;
+    } else if (!isResolved && (!isDynamite || !isKept)) {
+      hasOtherUnresolvedDice = true;
+    }
   });
+
+  return hasUnresolvedDynamites && !hasOtherUnresolvedDice;
+};
+
+// Add helper function to count total dynamites
+const countTotalDynamites = (dice, states) => {
+  return dice.reduce((count, value, index) => {
+    return value === DYNAMITE_SYMBOL ? count + 1 : count;
+  }, 0);
+};
+
+// Update the updateDiceStates handler
+socket.on('updateDiceStates', (data) => {
+  if (socket.id !== gameState.currentTurn) {
+    socket.emit('gameError', 'It is not your turn to manage dice.');
+    return;
+  }
+
+  const currentStates = gameState.diceStates;
+  const newStates = { ...currentStates, ...data.states };
+  
+  // Update game state
+  gameState.diceStates = newStates;
+
+  // Check total dynamites in play (regardless of state)
+  const totalDynamites = countTotalDynamites(gameState.currentDice, newStates);
+  console.log('Total dynamites:', totalDynamites);
+  if (totalDynamites >= 3) {
+    // Apply damage to current player
+    updatePlayerHealth(gameState.currentTurn, -1);
+    // Force end of rerolls
+    gameState.rerollsLeft = 0;
+  }
+
+  // Emit state update
+  io.emit('diceStateUpdate', {
+    states: newStates,
+    currentPlayer: socket.id
+  });
+
+  // Check if all dice are resolved
+  if (checkAllDiceResolved(gameState.diceStates)) {
+    progressToNextTurn(io);
+  }
+});
+
+// Disconnect Handling
+socket.on('disconnect', () => {
+  console.log(`❌ User disconnected: ${socket.id}`);
+  delete players[socket.id];
+  io.emit('playerListUpdate', Object.values(players));
+});
 });
 
 // Start the server
