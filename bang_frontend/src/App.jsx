@@ -52,6 +52,8 @@ export default function App() {
   const [boardArrows, setBoardArrows] = useState(9);
   const [playerArrows, setPlayerArrows] = useState({});
   const [gameLog, setGameLog] = useState([]);
+  const [selectedBeerTarget, setSelectedBeerTarget] = useState(null);
+  const [isResolvingBeer, setIsResolvingBeer] = useState(false);
 
   useEffect(() => {
     const handlers = {
@@ -231,6 +233,49 @@ export default function App() {
     return keptGuns >= 3;
   };
 
+  // Add new handler for beer resolution
+  const handleBeerResolution = (targetPlayerId) => {
+    if (!isResolvingBeer || socket.id !== currentTurn) return;
+
+    // Find the first kept beer die
+    const beerIndex = diceResult.findIndex((dice, index) => 
+      dice === '🍺' && diceStates[index] === DICE_STATES.KEPT
+    );
+
+    if (beerIndex === -1) return;
+
+    // Update dice state and notify server
+    const newDiceStates = {
+      ...diceStates,
+      [beerIndex]: DICE_STATES.RESOLVED
+    };
+
+    setDiceStates(newDiceStates);
+    socket.emit('resolveBeer', { 
+      targetPlayerId,
+      diceIndex: beerIndex,
+      newStates: newDiceStates
+    });
+    setIsResolvingBeer(false);
+  };
+
+  // Add helper to check for 3+ dynamites
+  const hasThreeOrMoreDynamites = () => {
+    return Object.entries(diceStates).filter(([index, state]) => 
+      diceResult[index] === DYNAMITE_SYMBOL && state === 'resolved'
+    ).length >= 3;
+  };
+
+  // Add helper to check if beer can be used
+  const canUseBeer = diceResult.some((dice, index) => 
+    dice === '🍺' && diceStates[index] === DICE_STATES.KEPT
+  );
+
+  // Add helper to check if a player can be healed
+  const canHealPlayer = (player) => {
+    return player.health < player.maxHealth;
+  };
+
   // Update the toggleDiceState function with fixed gun resolution logic
   const toggleDiceState = (index, reverse = false) => {
     if (socket.id !== currentTurn) return;
@@ -266,6 +311,12 @@ export default function App() {
         return;
       }
     }
+
+    // Modified state progression
+    if (currentState === DICE_STATES.KEPT && diceResult[index] === '🍺') {
+      setIsResolvingBeer(true);
+      return;
+    }
   
     // Normal state progression
     let newState;
@@ -291,17 +342,18 @@ export default function App() {
     socket.emit('updateDiceStates', { states: newDiceStates });
   };
 
-  // Add helper to check for 3+ dynamites
-  const hasThreeOrMoreDynamites = () => {
-    return Object.entries(diceStates).filter(([index, state]) => 
-      diceResult[index] === DYNAMITE_SYMBOL && state === 'resolved'
-    ).length >= 3;
-  };
-
   const renderPlayerTile = (player, index) => (
     <div
       key={index}
-      className={`player-tile ${player.socketId === currentTurn ? 'active' : ''} ${player.socketId === socket.id ? 'current-player' : ''}`}
+      className={`player-tile 
+        ${player.socketId === currentTurn ? 'active' : ''} 
+        ${player.socketId === socket.id ? 'current-player' : ''}
+        ${isResolvingBeer ? 'healable' : ''}`}
+      onClick={() => {
+        if (isResolvingBeer) {
+          handleBeerResolution(player.socketId);
+        }
+      }}
     >
       <h4>{player.name}</h4>
       <div className="health-display">

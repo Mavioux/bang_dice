@@ -28,6 +28,7 @@ const PLAYER_BASE_HEALTH = 8;
 const SHERIFF_EXTRA_HEALTH = 2;
 const QUESTION_MARK_SYMBOL = '❓';
 const GUN_SYMBOL = '🔫';
+const BEER_SYMBOL = '🍺';
 const players = {}; // { socketId: { name, role, health, arrows, isAlive } }
 const gameState = { 
   started: false,
@@ -433,6 +434,42 @@ io.on('connection', (socket) => {
       currentPlayer: socket.id
     });
 
+    if (checkAllDiceResolved(newStates)) {
+      progressToNextTurn(io);
+    }
+  });
+
+  // Add new event handler inside io.on('connection', (socket) => {
+  socket.on('resolveBeer', ({ targetPlayerId, diceIndex, newStates }) => {
+    if (socket.id !== gameState.currentTurn) {
+      socket.emit('gameError', 'It is not your turn.');
+      return;
+    }
+
+    const targetPlayer = players[targetPlayerId];
+    if (!targetPlayer) {
+      socket.emit('gameError', 'Invalid target player.');
+      return;
+    }
+
+    // Update the dice states
+    gameState.diceStates = newStates;
+
+    // Try to heal the target player
+    if (targetPlayer.health < targetPlayer.maxHealth) {
+      updatePlayerHealth(targetPlayerId, 1);
+      emitGameLog(io, `🍺 ${players[socket.id].name} healed ${targetPlayer.name}`);
+    } else {
+      emitGameLog(io, `🍺 ${players[socket.id].name} tried to heal ${targetPlayer.name}, but they were already at max health!`);
+    }
+
+    // Broadcast updated dice states
+    io.emit('diceStateUpdate', {
+      states: newStates,
+      currentPlayer: socket.id
+    });
+
+    // Check if turn should end
     if (checkAllDiceResolved(newStates)) {
       progressToNextTurn(io);
     }

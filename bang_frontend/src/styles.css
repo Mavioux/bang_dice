@@ -115,6 +115,28 @@ body {
   box-shadow: 0 0 15px #ffa500; /* Stronger glow effect */
 }
 
+// Add styles for healable players
+.player-tile.can-heal {
+  cursor: pointer;
+  border: 2px dashed #4caf50;
+}
+
+.player-tile.can-heal:hover {
+  background-color: #2d2d2d;
+  box-shadow: 0 0 15px rgba(76, 175, 80, 0.3);
+}
+
+.player-tile.healable {
+  cursor: pointer;
+  border: 2px solid #2196F3;
+  box-shadow: 0 0 10px rgba(33, 150, 243, 0.3);
+}
+
+.player-tile.healable:hover {
+  background-color: #2d2d2d;
+  box-shadow: 0 0 15px rgba(33, 150, 243, 0.5);
+}
+
 .player-tile h4 {
   margin: 0;
   font-size: 1.2em;
