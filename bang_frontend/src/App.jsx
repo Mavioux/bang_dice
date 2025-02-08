@@ -198,6 +198,13 @@ export default function App() {
     socket.emit('updateDiceStates', { states: newDiceStates });
   };
 
+  // Add helper to check for 3+ dynamites
+  const hasThreeOrMoreDynamites = () => {
+    return Object.entries(diceStates).filter(([index, state]) => 
+      diceResult[index] === DYNAMITE_SYMBOL && state === 'resolved'
+    ).length >= 3;
+  };
+
   return (
     <div className={`app-container ${gameStarted ? 'game-started' : ''}`}>
       {!gameStarted ? (
@@ -293,8 +300,12 @@ export default function App() {
             </div>
             {socket.id === currentTurn && (
               <div className="dice-actions">
-                <button onClick={rollDice} disabled={rerollsLeft === 0}>
+                <button 
+                  onClick={rollDice} 
+                  disabled={rerollsLeft === 0 || hasThreeOrMoreDynamites()}
+                >
                   Roll ({rerollsLeft} rerolls left)
+                  {hasThreeOrMoreDynamites() && ' - Dynamites Exploded!'}
                 </button>
               </div>
             )}

@@ -115,6 +115,14 @@ const countResolvedDynamites = (dice, states) => {
   ).length;
 };
 
+// Add helper function to check if turn should end due to dynamites
+const checkDynamiteEnd = (dice, states) => {
+  const dynamiteCount = Object.entries(states).filter(([index, state]) => 
+    dice[index] === DYNAMITE_SYMBOL && state === 'resolved'
+  ).length;
+  return dynamiteCount >= 3;
+};
+
 // Handle Socket.io connections
 io.on('connection', (socket) => {
   console.log(`🔌 A user connected: ${socket.id}`);
@@ -201,9 +209,9 @@ socket.on('rollDice', (keptDiceData = {}) => {
     return;
   }
 
-  // Check rerolls before proceeding
-  if (gameState.rerollsLeft <= 0) {
-    socket.emit('gameError', 'No rerolls left for this turn.');
+  // Check rerolls and dynamites before proceeding
+  if (gameState.rerollsLeft <= 0 || checkDynamiteEnd(gameState.currentDice, gameState.diceStates)) {
+    socket.emit('gameError', 'Cannot roll - either no rerolls left or dynamites exploded!');
     return;
   }
 
@@ -237,7 +245,8 @@ socket.on('rollDice', (keptDiceData = {}) => {
   // Check dynamite damage only if not already dealt this turn
   if (!gameState.dynamiteDamageDealt && countResolvedDynamites(diceResult, newDiceStates) >= 3) {
     updatePlayerHealth(gameState.currentTurn, -1);
-    gameState.dynamiteDamageDealt = true;  // Set the flag
+    gameState.dynamiteDamageDealt = true;
+    gameState.rerollsLeft = 0; // Force end of rolling
   }
 
   // Emit updated game state
@@ -283,10 +292,9 @@ socket.on('updateDiceStates', (data) => {
   const newStates = { ...gameState.diceStates, ...data.states };
   gameState.diceStates = newStates;
 
-  // Check dynamite damage only if not already dealt this turn
-  if (!gameState.dynamiteDamageDealt && countResolvedDynamites(gameState.currentDice, newStates) >= 3) {
-    updatePlayerHealth(gameState.currentTurn, -1);
-    gameState.dynamiteDamageDealt = true;  // Set the flag
+  // Only check if we need to end rolling, don't apply damage here
+  if (countResolvedDynamites(gameState.currentDice, newStates) >= 3) {
+    gameState.rerollsLeft = 0;
   }
 
   io.emit('diceStateUpdate', {
