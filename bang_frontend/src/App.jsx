@@ -46,92 +46,57 @@ export default function App() {
   const [diceStates, setDiceStates] = useState({}); // Maps dice index to its state
 
   useEffect(() => {
-    // Listen for updates from the server
-    socket.on('playerListUpdate', (updatedPlayers) => {
-      console.log('Updated Players:', updatedPlayers);
-      setPlayers(updatedPlayers);
-    });
-
-    // Handle role assignment
-    socket.on('assignRole', (data) => {
-      console.log('Assigned Role:', data);
-      setRole(data.role); // Update the role state
-    });
-
-    // Handle game start
-    socket.on('gameStarted', (players) => {
-      console.log('Game Started with Players:', players);
-      setGameStarted(true);
-      setPlayers(players);
-    });
-
-    // Handle current turn updates
-    socket.on('updateTurn', (currentTurn) => {
-      console.log('Current Turn:', currentTurn);
-      setCurrentTurn(currentTurn);
-      // Reset all dice-related state for new turn
-      setKeptDice([]);
-      setKeptIndices(new Set());
-      setRerollsLeft(3);
-      setDiceStates({});
-    });
-
-    // Handle dice result
-    socket.on('diceResult', (data) => {
-      console.log('Dice Result:', data);
-      setDiceResult(data.dice);
-      setDiceStates(data.states);
-      setRerollsLeft(data.rerollsLeft);
-      
-      // Remove the dynamite alert code
-    });
-
-    socket.on('indianAttack', (isActive) => setIndianAttackActive(isActive));
-    socket.on('updateArrows', (arrows) => setArrowsInPlay(arrows));
-
-    // Add new listener for kept dice updates
-    socket.on('keptDiceUpdate', (data) => {
-      console.log('Kept Dice Update:', data);
-      setKeptDice(data.dice);
-      setKeptIndices(new Set(data.indices));
-    });
-
-    socket.on('diceStateUpdate', (data) => {
-      setDiceStates(data.states);
-    });
-
-    // Update health listener to handle visual updates
-    socket.on('updateHealth', (healthData) => {
-      setPlayers(currentPlayers => {
-        const updatedPlayers = [...currentPlayers];
-        healthData.forEach(data => {
-          const playerIndex = updatedPlayers.findIndex(p => p.socketId === data.socketId);
-          if (playerIndex !== -1) {
-            updatedPlayers[playerIndex] = {
-              ...updatedPlayers[playerIndex],
-              health: data.health,
-              maxHealth: data.maxHealth
-            };
-          }
+    const handlers = {
+      playerListUpdate: (updatedPlayers) => setPlayers(updatedPlayers),
+      assignRole: (data) => setRole(data.role),
+      gameStarted: (players) => {
+        setGameStarted(true);
+        setPlayers(players);
+      },
+      updateTurn: (currentTurn) => {
+        setCurrentTurn(currentTurn);
+        // Reset dice state for new turn
+        setKeptDice([]);
+        setKeptIndices(new Set());
+        setRerollsLeft(3);
+        setDiceStates({});
+      },
+      diceResult: (data) => {
+        setDiceResult(data.dice);
+        setDiceStates(data.states);
+        setRerollsLeft(data.rerollsLeft);
+      },
+      diceStateUpdate: (data) => setDiceStates(data.states),
+      updateHealth: (healthData) => {
+        setPlayers(currentPlayers => {
+          const updatedPlayers = [...currentPlayers];
+          healthData.forEach(data => {
+            const playerIndex = updatedPlayers.findIndex(p => p.socketId === data.socketId);
+            if (playerIndex !== -1) {
+              updatedPlayers[playerIndex] = {
+                ...updatedPlayers[playerIndex],
+                health: data.health,
+                maxHealth: data.maxHealth
+              };
+            }
+          });
+          return updatedPlayers;
         });
-        return updatedPlayers;
-      });
+      }
+    };
+
+    // Register all handlers
+    Object.entries(handlers).forEach(([event, handler]) => {
+      socket.on(event, handler);
     });
 
-    // Cleanup listeners on unmount
+    // Cleanup
     return () => {
-      socket.off('playerListUpdate');
-      socket.off('assignRole');
-      socket.off('gameStarted');
-      socket.off('updateTurn');
-      socket.off('diceResult');
-      socket.off('indianAttack');
-      socket.off('updateArrows');
-      socket.off('keptDiceUpdate');
-      socket.off('diceStateUpdate');
-      socket.off('updateHealth');
+      Object.keys(handlers).forEach(event => {
+        socket.off(event);
+      });
     };
-  }, [currentTurn, diceStates]); // Added diceStates as dependency
+  }, []);  // Empty dependency array since handlers are stable
 
   // Add useEffect to handle auto-resolution of dynamites
   useEffect(() => {
@@ -192,50 +157,9 @@ export default function App() {
 
   const DYNAMITE_SYMBOL = '💣';
 
-  // Add helper function
-  const onlyDynamitesLeftToResolve = () => {
-    let hasUnresolvedDynamites = false;
-    let hasOtherUnresolvedDice = false;
-
-    diceResult.forEach((dice, index) => {
-      const isDynamite = dice === DYNAMITE_SYMBOL;
-      const isKept = diceStates[index] === DICE_STATES.KEPT;
-      const isResolved = diceStates[index] === DICE_STATES.RESOLVED;
-
-      if (isDynamite && isKept) {
-        hasUnresolvedDynamites = true;
-      } else if (!isResolved && (!isDynamite || !isKept)) {
-        hasOtherUnresolvedDice = true;
-      }
-    });
-
-    return hasUnresolvedDynamites && !hasOtherUnresolvedDice;
-  };
-
-  // Add helper function to check if dynamite can be resolved
-  const canResolveDynamite = (index) => {
-    if (diceResult[index] !== DYNAMITE_SYMBOL) return true;
-    
-    // Count dice by type and state
-    let unresolved = 0;
-    let unresolvedDynamites = 0;
-    
-    diceResult.forEach((dice, i) => {
-      if (diceStates[i] !== DICE_STATES.RESOLVED) {
-        unresolved++;
-        if (dice === DYNAMITE_SYMBOL) {
-          unresolvedDynamites++;
-        }
-      }
-    });
-
-    // Can resolve if only dynamites are left unresolved
-    return unresolved === unresolvedDynamites;
-  };
-
   const toggleDiceState = (index, reverse = false) => {
     if (socket.id !== currentTurn) return;
-
+  
     const currentState = diceStates[index] || DICE_STATES.ROLLED;
     
     // Handle reverse action
@@ -249,13 +173,8 @@ export default function App() {
       socket.emit('updateDiceStates', { states: newDiceStates });
       return;
     }
-
-    // Check if dynamite can be resolved
-    if (diceResult[index] === DYNAMITE_SYMBOL && 
-        !canResolveDynamite(index)) {
-      return;
-    }
-
+  
+    // Normal state progression
     let newState;
     switch (currentState) {
       case DICE_STATES.ROLLED:
@@ -269,12 +188,12 @@ export default function App() {
       default:
         newState = DICE_STATES.ROLLED;
     }
-
+  
     const newDiceStates = { 
       ...diceStates,
       [index]: newState 
     };
-
+  
     setDiceStates(newDiceStates);
     socket.emit('updateDiceStates', { states: newDiceStates });
   };
