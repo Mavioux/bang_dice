@@ -196,20 +196,14 @@ const checkGatlingAvailable = (dice, states) => {
 
 // Update the handleGatling function to ensure it only uses exactly 3 guns when resolving a gatling
 const handleGatling = (playerId, dice, states) => {
-  // Find indices of all kept gun dice in order of appearance
-  const keptGunIndices = Object.entries(dice)
-    .map(([index, value], originalIndex) => ({ index: Number(index), value, originalIndex }))
-    .filter(({ index, value }) => 
-      value === GUN_SYMBOL && states[index] === 'kept'
-    )
-    .sort((a, b) => a.originalIndex - b.originalIndex) // Sort by original order
-    .map(({ index }) => index)
-    .slice(0, 2);  // Take exactly first 3 guns
-
-  // Create new states object with resolved guns
+  // Find all kept gun dice and resolve them all
   const newStates = { ...states };
-  keptGunIndices.forEach(index => {
-    newStates[index] = 'resolved';
+  
+  // Resolve all kept gun dice
+  Object.entries(states).forEach(([index, state]) => {
+    if (dice[index] === GUN_SYMBOL && state === 'kept') {
+      newStates[index] = 'resolved';
+    }
   });
 
   // Deal damage to all other players
@@ -344,7 +338,7 @@ io.on('connection', (socket) => {
     const numNewDice = 6 - diceResult.length;
     for (let i = 0; i < numNewDice; i++) {
       const randomIndex = Math.floor(Math.random() * diceSymbols.length);
-      const rolledValue = diceSymbols[randomIndex];
+      const rolledValue = diceSymbols[5];
       diceResult.push(rolledValue);
       
       // Automatically resolve dynamites
