@@ -232,3 +232,21 @@ body {
   cursor: not-allowed;
 }
 
+.arrow-display {
+  margin-top: 5px;
+  font-size: 0.9em;
+  color: #ffd700;
+}
+
+.arrows-on-board {
+  font-size: 1.2em;
+  color: #ffd700;
+  text-align: center;
+  margin: 10px 0;
+}
+
+.board-status {
+  margin: 20px 0;
+  text-align: center;
+}
+

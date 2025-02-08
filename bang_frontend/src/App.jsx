@@ -44,6 +44,8 @@ export default function App() {
   const [indianAttackActive, setIndianAttackActive] = useState(false);
   const [keptIndices, setKeptIndices] = useState(new Set()); // Indices of kept dice
   const [diceStates, setDiceStates] = useState({}); // Maps dice index to its state
+  const [boardArrows, setBoardArrows] = useState(9);
+  const [playerArrows, setPlayerArrows] = useState({});
 
   useEffect(() => {
     const handlers = {
@@ -82,7 +84,15 @@ export default function App() {
           });
           return updatedPlayers;
         });
-      }
+      },
+      arrowUpdate: (data) => {
+        setBoardArrows(data.arrowsOnBoard);
+        const arrowMap = {};
+        data.playerArrows.forEach(({ socketId, arrows }) => {
+          arrowMap[socketId] = arrows;
+        });
+        setPlayerArrows(arrowMap);
+      },
     };
 
     // Register all handlers
@@ -205,6 +215,25 @@ export default function App() {
     ).length >= 3;
   };
 
+  const renderPlayerTile = (player, index) => (
+    <div
+      key={index}
+      className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
+    >
+      <h4>{player.name}</h4>
+      <div className="health-display">
+        <span className="health-value">❤️ {player.health}</span>
+        <span className="health-max">({player.maxHealth})</span>
+      </div>
+      <div className="arrow-display">
+        <span className="arrow-count">🏹 {playerArrows[player.socketId] || 0}</span>
+      </div>
+      {(player.socketId === socket.id || player.role === 'Sheriff') && (
+        <p>Role: {player.role}</p>
+      )}
+    </div>
+  );
+
   return (
     <div className={`app-container ${gameStarted ? 'game-started' : ''}`}>
       {!gameStarted ? (
@@ -250,21 +279,9 @@ export default function App() {
 
           {/* Player tiles */}
           <div className="player-tiles">
-            {reorderPlayers(players, socket.id).map((player, index) => (
-              <div
-                key={index}
-                className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
-              >
-                <h4>{player.name}</h4>
-                <div className="health-display">
-                  <span className="health-value">❤️ {player.health}</span>
-                  <span className="health-max">({player.maxHealth})</span>
-                </div>
-                {(player.socketId === socket.id || player.role === 'Sheriff') && (
-                  <p>Role: {player.role}</p>
-                )}
-              </div>
-            ))}
+            {reorderPlayers(players, socket.id).map((player, index) => 
+              renderPlayerTile(player, index)
+            )}
           </div>
 
           {/* Dice Rolling Section */}
@@ -309,6 +326,12 @@ export default function App() {
                 </button>
               </div>
             )}
+          </div>
+
+          <div className="board-status">
+            <p className="arrows-on-board">
+              Arrows on Board: {boardArrows}
+            </p>
           </div>
 
           {arrowsInPlay > 0 && (

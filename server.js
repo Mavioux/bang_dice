@@ -18,6 +18,13 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 
+// Add constants first
+const TOTAL_ARROWS = 9;
+const ARROW_SYMBOL = '🏹';
+const DYNAMITE_SYMBOL = '💣';
+const PLAYER_BASE_HEALTH = 8;
+const SHERIFF_EXTRA_HEALTH = 2;
+
 // Game data
 const players = {}; // { socketId: { name, role, health, arrows, isAlive } }
 const gameState = { 
@@ -28,18 +35,13 @@ const gameState = {
   rerollsLeft: 3,  // Add initial rerolls count
   currentDice: [],  // Add this to track current dice
   resolvedDynamites: 0,  // Add counter for resolved dynamites
-  dynamiteDamageDealt: false  // Add this flag
+  dynamiteDamageDealt: false,  // Add this flag
+  arrowsOnBoard: TOTAL_ARROWS,  // Track remaining arrows
 };
 const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫']; // Emojis for dice symbols
 
-// Add constant for dynamite symbol
-const DYNAMITE_SYMBOL = '💣';
-
 // Roles
 const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'Deputy', 'Renegade'];
-
-const PLAYER_BASE_HEALTH = 8;
-const SHERIFF_EXTRA_HEALTH = 2;
 
 // Serve a basic response
 app.get('/', (req, res) => {
@@ -123,6 +125,62 @@ const checkDynamiteEnd = (dice, states) => {
   return dynamiteCount >= 3;
 };
 
+// Update the arrow handling function to only count newly rolled arrows
+const handleArrowRoll = (dice, states, playerId) => {
+  // Only count arrows from newly rolled dice (not kept or resolved)
+  const arrowCount = dice.reduce((count, die, index) => {
+    if (die === ARROW_SYMBOL && states[index] === 'rolled') {
+      return count + 1;
+    }
+    return count;
+  }, 0);
+
+  if (arrowCount === 0) return;
+
+  console.log(`Processing ${arrowCount} new arrows for player ${playerId}`);
+
+  // Count how many arrows will trigger indian attack
+  const arrowsUntilEmpty = Math.min(arrowCount, gameState.arrowsOnBoard);
+  
+  // Add arrows to current player
+  players[playerId].arrows += arrowsUntilEmpty;
+  gameState.arrowsOnBoard -= arrowsUntilEmpty;
+
+  // Check if Indian Attack should trigger
+  if (gameState.arrowsOnBoard === 0) {
+    // Deal damage based on arrows
+    Object.values(players).forEach(player => {
+      if (player.arrows > 0) {
+        updatePlayerHealth(player.socketId, -player.arrows);
+        player.arrows = 0;  // Reset arrows after damage
+      }
+    });
+    
+    // Reset board arrows
+    gameState.arrowsOnBoard = TOTAL_ARROWS;
+
+    // Handle remaining arrows from current roll
+    const remainingArrows = arrowCount - arrowsUntilEmpty;
+    if (remainingArrows > 0) {
+      players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
+      gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
+    }
+  }
+
+  broadcastArrowState();
+};
+
+// Add broadcast function for arrow updates
+const broadcastArrowState = () => {
+  io.emit('arrowUpdate', {
+    arrowsOnBoard: gameState.arrowsOnBoard,
+    playerArrows: Object.entries(players).map(([id, player]) => ({
+      socketId: id,
+      arrows: player.arrows
+    }))
+  });
+};
+
 // Handle Socket.io connections
 io.on('connection', (socket) => {
   console.log(`🔌 A user connected: ${socket.id}`);
@@ -137,7 +195,7 @@ socket.on('joinGame', (playerName) => {
     role: null, 
     health: PLAYER_BASE_HEALTH,
     maxHealth: PLAYER_BASE_HEALTH, // Store max health
-    arrows: 0, 
+    arrows: 0,  // Initialize arrow count
     isAlive: true, 
     socketId: socket.id // Add socket.id to the player object
   };
@@ -241,6 +299,9 @@ socket.on('rollDice', (keptDiceData = {}) => {
   // Store current dice state
   gameState.currentDice = diceResult;
   gameState.diceStates = newDiceStates;
+
+  // Handle arrows right after rolling, passing the new dice states
+  handleArrowRoll(diceResult, newDiceStates, socket.id);
 
   // Check dynamite damage only if not already dealt this turn
   if (!gameState.dynamiteDamageDealt && countResolvedDynamites(diceResult, newDiceStates) >= 3) {
@@ -346,6 +407,7 @@ const progressToNextTurn = (io) => {
 
   // Update game state with initial dice
   gameState.diceStates = initialStates;
+  broadcastArrowState();  // Ensure arrow state is synced on turn change
 
   // Emit turn update and initial dice roll
   io.emit('updateTurn', gameState.currentTurn);
