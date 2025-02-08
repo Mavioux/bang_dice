@@ -20,11 +20,24 @@ const PORT = process.env.PORT || 3000;
 
 // Game data
 const players = {}; // { socketId: { name, role, health, arrows, isAlive } }
-const gameState = { started: false, playerOrder: [], currentTurn: null };
+const gameState = { 
+  started: false, 
+  playerOrder: [], 
+  currentTurn: null,
+  diceStates: {},
+  rerollsLeft: 3,  // Add initial rerolls count
+  currentDice: []  // Add this to track current dice
+};
 const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫']; // Emojis for dice symbols
+
+// Add constant for dynamite symbol
+const DYNAMITE_SYMBOL = '💣';
 
 // Roles
 const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'Deputy', 'Renegade'];
+
+const PLAYER_BASE_HEALTH = 8;
+const SHERIFF_EXTRA_HEALTH = 2;
 
 // Serve a basic response
 app.get('/', (req, res) => {
@@ -43,7 +56,8 @@ socket.on('joinGame', (playerName) => {
   players[socket.id] = { 
     name: playerName, 
     role: null, 
-    health: 8, 
+    health: PLAYER_BASE_HEALTH,
+    maxHealth: PLAYER_BASE_HEALTH, // Store max health
     arrows: 0, 
     isAlive: true, 
     socketId: socket.id // Add socket.id to the player object
@@ -59,6 +73,55 @@ const shuffleArray = (array) => {
     [array[i], array[j]] = [array[j], array[i]];
   }
   return array;
+};
+
+// Add new helper function near the top with other game logic
+const checkAllDiceResolved = (states) => {
+  return Object.values(states).every(state => state === 'resolved');
+};
+
+const progressToNextTurn = (io) => {
+  gameState.diceStates = {};
+  gameState.rerollsLeft = 3; // Reset to initial value
+  gameState.currentDice = [];
+  
+  // Find next player's turn
+  const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
+  const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
+  gameState.currentTurn = gameState.playerOrder[nextIndex];
+  
+  // Roll initial dice for new player
+  const initialDice = [];
+  const initialStates = {};
+  
+  // Roll all 6 dice for the new player
+  for (let i = 0; i < 6; i++) {
+    const randomIndex = Math.floor(Math.random() * diceSymbols.length);
+    initialDice.push(diceSymbols[randomIndex]);
+    initialStates[i] = 'rolled';
+  }
+
+  // Update game state with initial dice
+  gameState.diceStates = initialStates;
+
+  // Emit turn update and initial dice roll
+  io.emit('updateTurn', gameState.currentTurn);
+  io.emit('diceResult', {
+    dice: initialDice,
+    states: initialStates,
+    currentPlayer: gameState.currentTurn,
+    rerollsLeft: gameState.rerollsLeft
+  });
+};
+
+// Add new function to broadcast health updates
+const broadcastHealthUpdates = (io) => {
+  const healthData = Object.values(players).map(player => ({
+    socketId: player.socketId,
+    health: player.health,
+    maxHealth: player.maxHealth
+  }));
+  io.emit('updateHealth', healthData);
 };
 
 // Start Game & Assign Roles
@@ -81,8 +144,19 @@ socket.on('startGame', () => {
 
   Object.keys(players).forEach((id, index) => {
     players[id].role = rolesForGame[index];
-    io.to(id).emit('assignRole', { id, role: rolesForGame[index] });
+    // If player is Sheriff, add extra health
+    if (rolesForGame[index] === 'Sheriff') {
+      players[id].health += SHERIFF_EXTRA_HEALTH;
+      players[id].maxHealth += SHERIFF_EXTRA_HEALTH;
+    }
+    io.to(id).emit('assignRole', { 
+      id, 
+      role: rolesForGame[index]
+    });
   });
+
+  // Broadcast initial health states to all players
+  broadcastHealthUpdates(io);
 
   gameState.started = true;
 
@@ -107,36 +181,155 @@ socket.on('startGame', () => {
   io.emit('gameStarted', shuffledPlayers); // Send the shuffled players array to all clients
 });
 
-// Dice Roll
-socket.on('rollDice', (keptDice = []) => {
+// Modify the rollDice handler
+socket.on('rollDice', (keptDiceData = {}) => {
   if (socket.id !== gameState.currentTurn) {
     socket.emit('gameError', 'It is not your turn to roll the dice.');
     return;
   }
 
-  const numDice = 6 - keptDice.length; // Number of dice to roll
-  const diceResult = [];
-
-  for (let i = 0; i < numDice; i++) {
-    const randomIndex = Math.floor(Math.random() * diceSymbols.length);
-    diceResult.push(diceSymbols[randomIndex]);
+  // Check rerolls before proceeding
+  if (gameState.rerollsLeft <= 0) {
+    socket.emit('gameError', 'No rerolls left for this turn.');
+    return;
   }
 
-  // Combine kept dice with new rolls
-  const finalDice = [...keptDice, ...diceResult];
+  // Decrease rerolls first
+  gameState.rerollsLeft--;
 
-  // Automatically move dynamite to kept dice
-  const dynamiteCount = finalDice.filter((dice) => dice === '💣').length;
-  if (dynamiteCount >= 3) {
-    // If 3 or more dynamites, move all dice to kept dice
-    io.to(socket.id).emit('diceResult', finalDice);
-    io.to(socket.id).emit('updateKeptDice', finalDice);
-    io.to(socket.id).emit('disableReroll');
-  } else {
-    // Otherwise, send the dice result
-    io.to(socket.id).emit('diceResult', finalDice);
+  const existingStates = gameState.diceStates;
+  const newDiceStates = {};
+  const diceResult = [];
+  const originalIndices = {};
+  
+  // First, handle kept and resolved dice
+  Object.entries(existingStates).forEach(([index, state]) => {
+    if (state === 'kept' || state === 'resolved') {
+      // Make sure we're accessing the correct dice value
+      const diceValue = keptDiceData.dice[index];
+      console.log('Keeping dice:', index, diceValue); // Debug log
+      if (diceValue) {
+        diceResult.push(diceValue);
+        newDiceStates[diceResult.length - 1] = state;
+        originalIndices[diceResult.length - 1] = parseInt(index);
+      }
+    }
+  });
+
+  // Then add new rolled dice
+  const numNewDice = 6 - diceResult.length;
+  for (let i = 0; i < numNewDice; i++) {
+    const randomIndex = Math.floor(Math.random() * diceSymbols.length);
+    const rolledValue = diceSymbols[randomIndex];
+    diceResult.push(rolledValue);
+    
+    // Automatically keep dynamites
+    newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'kept' : 'rolled';
+  }
+
+  // Store the dice result in game state
+  gameState.currentDice = diceResult;
+
+  // Update game state
+  gameState.diceStates = gameState.rerollsLeft === 0 
+    ? autoResolveDynamites(diceResult, newDiceStates)
+    : newDiceStates;
+
+  io.emit('diceResult', {
+    dice: diceResult,
+    states: gameState.diceStates,
+    originalIndices: originalIndices,
+    currentPlayer: socket.id,
+    rerollsLeft: gameState.rerollsLeft // Send updated rerolls count
+  });
+
+  // Check if turn should end (all dice resolved and no rerolls left)
+  if (gameState.rerollsLeft === 0 && checkAllDiceResolved(gameState.diceStates)) {
+    progressToNextTurn(io);
   }
 });
+
+// Simplified dice selection update handler
+socket.on('updateKeptDice', (data) => {
+  if (socket.id !== gameState.currentTurn) {
+    socket.emit('gameError', 'It is not your turn to manage dice.');
+    return;
+  }
+
+  io.emit('keptDiceUpdate', {
+    indices: data.indices,
+    currentPlayer: socket.id
+  });
+});
+
+// Add state reset to end turn handler
+socket.on('endTurn', () => {
+  if (socket.id !== gameState.currentTurn) return;
+  progressToNextTurn(io);
+});
+
+// Add new handler for dice state updates
+socket.on('updateDiceStates', (data) => {
+  if (socket.id !== gameState.currentTurn) {
+    socket.emit('gameError', 'It is not your turn to manage dice.');
+    return;
+  }
+
+  // Validate that dynamites remain kept
+  const currentStates = gameState.diceStates;
+  const newStates = { ...currentStates, ...data.states };
+  
+  // Check each dice to ensure dynamites stay kept
+  Object.entries(newStates).forEach(([index, state]) => {
+    if (gameState.currentDice[index] === DYNAMITE_SYMBOL && 
+        state !== 'kept' && 
+        state !== 'resolved') {
+      newStates[index] = 'kept';
+    }
+  });
+
+  // Update game state with validated states
+  gameState.diceStates = newStates;
+
+  io.emit('diceStateUpdate', {
+    states: newStates,
+    currentPlayer: socket.id
+  });
+
+  // Check if all dice are resolved
+  if (checkAllDiceResolved(gameState.diceStates)) {
+    // Process any game effects here before changing turns
+    // TODO: Add game logic for resolved dice effects
+
+    // Progress to next turn
+    progressToNextTurn(io);
+  }
+});
+
+// Add helper function to auto-resolve dynamites
+const autoResolveDynamites = (dice, states) => {
+  const newStates = { ...states };
+  dice.forEach((value, index) => {
+    if (value === DYNAMITE_SYMBOL && newStates[index] === 'kept') {
+      newStates[index] = 'resolved';
+    }
+  });
+  return newStates;
+};
+
+// Add helper function for health management
+const updatePlayerHealth = (playerId, change) => {
+  const player = players[playerId];
+  if (!player) return false;
+
+  const newHealth = Math.min(Math.max(0, player.health + change), player.maxHealth);
+  player.health = newHealth;
+  player.isAlive = newHealth > 0;
+
+  // Broadcast updated health to all players
+  broadcastHealthUpdates(io);
+  return true;
+};
 
   // Disconnect Handling
   socket.on('disconnect', () => {

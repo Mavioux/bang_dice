@@ -4,6 +4,12 @@ import './styles.css';
 
 const socket = io('http://localhost:3000');
 
+const DICE_STATES = {
+  ROLLED: 'rolled',
+  KEPT: 'kept',
+  RESOLVED: 'resolved'
+};
+
 // Utility function to reorder the players array so the current player is in the center
 const reorderPlayers = (players, currentPlayerId) => {
   const currentPlayerIndex = players.findIndex((player) => player.socketId === currentPlayerId);
@@ -32,10 +38,12 @@ export default function App() {
   const [gameStarted, setGameStarted] = useState(false);
   const [diceResult, setDiceResult] = useState([]); // Current dice result
   const [keptDice, setKeptDice] = useState([]); // Dice the player has chosen to keep
-  const [rerollsLeft, setRerollsLeft] = useState(2); // Number of rerolls left
+  const [rerollsLeft, setRerollsLeft] = useState(3); // Changed from 2 to 3
   const [currentTurn, setCurrentTurn] = useState(null);
   const [arrowsInPlay, setArrowsInPlay] = useState(0);
   const [indianAttackActive, setIndianAttackActive] = useState(false);
+  const [keptIndices, setKeptIndices] = useState(new Set()); // Indices of kept dice
+  const [diceStates, setDiceStates] = useState({}); // Maps dice index to its state
 
   useEffect(() => {
     // Listen for updates from the server
@@ -61,16 +69,69 @@ export default function App() {
     socket.on('updateTurn', (currentTurn) => {
       console.log('Current Turn:', currentTurn);
       setCurrentTurn(currentTurn);
+      // Reset all dice-related state for new turn
+      setKeptDice([]);
+      setKeptIndices(new Set());
+      setRerollsLeft(3);
+      setDiceStates({});
     });
 
     // Handle dice result
-    socket.on('diceResult', (result) => {
-      console.log('Dice Result:', result);
-      setDiceResult(result);
+    socket.on('diceResult', (data) => {
+      console.log('Dice Result:', data);
+      setDiceResult(data.dice);
+      
+      // Reconstruct dice states using original indices
+      const newDiceStates = { ...data.states };
+      if (data.originalIndices) {
+        Object.entries(data.originalIndices).forEach(([newIndex, oldIndex]) => {
+          if (diceStates[oldIndex] === DICE_STATES.KEPT || 
+              diceStates[oldIndex] === DICE_STATES.RESOLVED) {
+            newDiceStates[newIndex] = diceStates[oldIndex];
+          }
+        });
+      }
+      
+      setDiceStates(newDiceStates);
+      setRerollsLeft(data.rerollsLeft);
+      
+      if (data.currentPlayer !== socket.id) {
+        setKeptDice([]);
+        setKeptIndices(new Set());
+      }
     });
 
     socket.on('indianAttack', (isActive) => setIndianAttackActive(isActive));
     socket.on('updateArrows', (arrows) => setArrowsInPlay(arrows));
+
+    // Add new listener for kept dice updates
+    socket.on('keptDiceUpdate', (data) => {
+      console.log('Kept Dice Update:', data);
+      setKeptDice(data.dice);
+      setKeptIndices(new Set(data.indices));
+    });
+
+    socket.on('diceStateUpdate', (data) => {
+      setDiceStates(data.states);
+    });
+
+    // Add new health update listener
+    socket.on('updateHealth', (healthData) => {
+      setPlayers(currentPlayers => {
+        const updatedPlayers = [...currentPlayers];
+        healthData.forEach(data => {
+          const playerIndex = updatedPlayers.findIndex(p => p.socketId === data.socketId);
+          if (playerIndex !== -1) {
+            updatedPlayers[playerIndex] = {
+              ...updatedPlayers[playerIndex],
+              health: data.health,
+              maxHealth: data.maxHealth
+            };
+          }
+        });
+        return updatedPlayers;
+      });
+    });
 
     // Cleanup listeners on unmount
     return () => {
@@ -81,8 +142,33 @@ export default function App() {
       socket.off('diceResult');
       socket.off('indianAttack');
       socket.off('updateArrows');
+      socket.off('keptDiceUpdate');
+      socket.off('diceStateUpdate');
+      socket.off('updateHealth');
     };
-  }, []);
+  }, [currentTurn, diceStates]); // Added diceStates as dependency
+
+  // Add useEffect to handle auto-resolution of dynamites
+  useEffect(() => {
+    if (rerollsLeft === 0 && diceResult.length > 0) {
+      const newDiceStates = { ...diceStates };
+      let statesChanged = false;
+
+      diceResult.forEach((dice, index) => {
+        if (dice === DYNAMITE_SYMBOL && newDiceStates[index] === DICE_STATES.KEPT) {
+          newDiceStates[index] = DICE_STATES.RESOLVED;
+          statesChanged = true;
+        }
+      });
+
+      if (statesChanged) {
+        setDiceStates(newDiceStates);
+        socket.emit('updateDiceStates', {
+          states: newDiceStates
+        });
+      }
+    }
+  }, [rerollsLeft, diceResult, diceStates]);
 
   const joinGame = () => {
     if (playerName.trim() !== '') {
@@ -95,37 +181,76 @@ export default function App() {
   };
 
   const rollDice = () => {
-    if (socket.id !== currentTurn) return; // Only the current player can roll
-
+    if (socket.id !== currentTurn) return;
     if (rerollsLeft === 0) {
       alert('No rerolls left!');
       return;
     }
 
-    // Emit the rollDice event with the kept dice
-    socket.emit('rollDice', keptDice);
-    setRerollsLeft(rerollsLeft - 1); // Decrease rerolls left
+    // Create an object that includes both dice values and states
+    const keptDiceData = {
+      dice: {},      // Store actual dice values
+      states: {}     // Store states for reference
+    };
+
+    // Store both dice values and their states
+    diceResult.forEach((dice, index) => {
+      if (diceStates[index] === DICE_STATES.KEPT || diceStates[index] === DICE_STATES.RESOLVED) {
+        keptDiceData.dice[index] = dice;
+        keptDiceData.states[index] = diceStates[index];
+      }
+    });
+
+    console.log('Sending kept dice:', keptDiceData); // Debug log
+    socket.emit('rollDice', keptDiceData);
   };
 
-  const endTurn = () => {
-    // Reset dice and rerolls for the next turn
-    setDiceResult([]);
-    setKeptDice([]);
-    setRerollsLeft(2);
+  const DYNAMITE_SYMBOL = '💣';
 
-    // Notify the server to move to the next player's turn
-    socket.emit('endTurn');
-  };
+  const toggleDiceState = (index, reverse = false) => {
+    if (socket.id !== currentTurn) return;
 
-  const toggleKeepDice = (index) => {
-    const dice = diceResult[index];
-    if (keptDice.includes(dice)) {
-      // Remove the dice from keptDice
-      setKeptDice(keptDice.filter((d) => d !== dice));
-    } else {
-      // Add the dice to keptDice
-      setKeptDice([...keptDice, dice]);
+    const currentState = diceStates[index] || DICE_STATES.ROLLED;
+    
+    // Handle reverse action
+    if (reverse) {
+      if (currentState !== DICE_STATES.KEPT) return;
+      const newDiceStates = {
+        ...diceStates,
+        [index]: DICE_STATES.ROLLED
+      };
+      setDiceStates(newDiceStates);
+      socket.emit('updateDiceStates', { states: newDiceStates });
+      return;
     }
+
+    // Normal state progression
+    if (diceResult[index] === DYNAMITE_SYMBOL && 
+        diceStates[index] === DICE_STATES.KEPT) {
+      return;
+    }
+
+    let newState;
+    switch (currentState) {
+      case DICE_STATES.ROLLED:
+        newState = DICE_STATES.KEPT;
+        break;
+      case DICE_STATES.KEPT:
+        newState = DICE_STATES.RESOLVED;
+        break;
+      case DICE_STATES.RESOLVED:
+        return;
+      default:
+        newState = DICE_STATES.ROLLED;
+    }
+
+    const newDiceStates = { 
+      ...diceStates,
+      [index]: newState 
+    };
+
+    setDiceStates(newDiceStates);
+    socket.emit('updateDiceStates', { states: newDiceStates });
   };
 
   return (
@@ -179,7 +304,10 @@ export default function App() {
                 className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
               >
                 <h4>{player.name}</h4>
-                <p>Health: {player.health}</p>
+                <div className="health-display">
+                  <span className="health-value">❤️ {player.health}</span>
+                  <span className="health-max">({player.maxHealth})</span>
+                </div>
                 {(player.socketId === socket.id || player.role === 'Sheriff') && (
                   <p>Role: {player.role}</p>
                 )}
@@ -188,43 +316,44 @@ export default function App() {
           </div>
 
           {/* Dice Rolling Section */}
-          {socket.id === currentTurn && (
-            <div className="dice-section">
-              <h3>Your Dice</h3>
-              <div className="dice-columns">
-                <div className="dice-column">
-                  <h4>Rolled Dice</h4>
-                  {diceResult.map((dice, index) => (
-                    <div
-                      key={index}
-                      className={`dice ${keptDice.includes(dice) ? 'kept' : ''}`}
-                      onClick={() => toggleKeepDice(index)}
+          <div className="dice-section">
+            <h3>{socket.id === currentTurn ? 'Your Dice' : `${players.find(p => p.socketId === currentTurn)?.name}'s Dice`}</h3>
+            <div className="dice-column">
+              {diceResult.map((dice, index) => (
+                <div key={index} className="dice-container">
+                  <div
+                    className={`dice ${diceStates[index]}`}
+                    onClick={() => socket.id === currentTurn && toggleDiceState(index)}
+                    style={{ cursor: socket.id === currentTurn ? 'pointer' : 'default' }}
+                  >
+                    {dice}
+                  </div>
+                  {/* Only show reverse button for non-dynamite kept dice */}
+                  {diceStates[index] === DICE_STATES.KEPT && 
+                   dice !== DYNAMITE_SYMBOL && 
+                   socket.id === currentTurn && (
+                    <button
+                      className="reverse-button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleDiceState(index, true);
+                      }}
+                      title="Reverse to rolled state"
                     >
-                      {dice}
-                    </div>
-                  ))}
+                      ↩️
+                    </button>
+                  )}
                 </div>
-                <div className="dice-column">
-                  <h4>Kept Dice</h4>
-                  {keptDice.map((dice, index) => (
-                    <div
-                      key={index}
-                      className="dice kept"
-                      onClick={() => toggleKeepDice(index)}
-                    >
-                      {dice}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              ))}
+            </div>
+            {socket.id === currentTurn && (
               <div className="dice-actions">
                 <button onClick={rollDice} disabled={rerollsLeft === 0}>
                   Roll ({rerollsLeft} rerolls left)
                 </button>
-                <button onClick={endTurn}>End Turn</button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {arrowsInPlay > 0 && (
             <p>Arrows in Play: {arrowsInPlay}</p>

@@ -129,9 +129,9 @@ body {
 
 .dice-column {
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  justify-content: center;
   gap: 10px;
+  margin-top: 10px;
 }
 
 .dice {
@@ -141,11 +141,26 @@ body {
   border-radius: 5px;
   cursor: pointer;
   user-select: none;
+  transition: all 0.3s ease;
+}
+
+.dice.rolled {
+  border-color: #ccc;
+  background-color: transparent;
 }
 
 .dice.kept {
   border-color: #4caf50;
-  background-color: #e8f5e9;
+  background-color: #4caf50;
+  color: white;
+}
+
+.dice.resolved {
+  border-color: #2196F3;
+  background-color: #2196F3;
+  color: white;
+  opacity: 0.8;
+  cursor: not-allowed;
 }
 
 .dice-actions {
@@ -164,6 +179,56 @@ body {
 
 .dice-actions button:disabled {
   background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.health-display {
+  margin: 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.health-value {
+  font-size: 1.2em;
+  color: #ff4444;
+}
+
+.health-max {
+  font-size: 0.9em;
+  color: #999;
+}
+
+.health-text {
+  font-size: 0.8em;
+  color: #999;
+}
+
+.dice-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 5px;
+}
+
+.reverse-button {
+  font-size: 1.2em;
+  cursor: pointer;
+  color: #999;
+  margin-top: 5px;
+  transition: color 0.3s ease;
+  background: none;
+  border: none;
+  padding: 2px;
+}
+
+.reverse-button:hover {
+  color: #fff;
+}
+
+.reverse-button:disabled {
+  color: #555;
   cursor: not-allowed;
 }
 
