@@ -229,7 +229,7 @@ export default function App() {
   const renderPlayerTile = (player, index) => (
     <div
       key={index}
-      className={`player-tile ${player.socketId === currentTurn ? 'active' : ''}`}
+      className={`player-tile ${player.socketId === currentTurn ? 'active' : ''} ${player.socketId === socket.id ? 'current-player' : ''}`}
     >
       <h4>{player.name}</h4>
       <div className="health-display">
@@ -240,7 +240,7 @@ export default function App() {
         <span className="arrow-count">🏹 {playerArrows[player.socketId] || 0}</span>
       </div>
       {(player.socketId === socket.id || player.role === 'Sheriff') && (
-        <p>Role: {player.role}</p>
+        <p className="role-text">{player.role}</p>
       )}
     </div>
   );
@@ -303,9 +303,8 @@ export default function App() {
       ) : (
         <>
           <div className="game-container">
-            {/* Centered Player Name */}
-            <h2 className="centered-name">{playerName}</h2>
-
+            {/* Remove the centered player name section */}
+            
             {/* Player tiles */}
             <div className="player-tiles">
               {reorderPlayers(players, socket.id).map((player, index) => 

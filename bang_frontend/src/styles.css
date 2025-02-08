@@ -101,12 +101,18 @@ body {
   text-align: center;
   width: 150px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-  position: relative; /* Required for pseudo-element positioning */
+  position: relative;
+  border: 2px solid transparent; /* Add default transparent border */
+}
+
+.player-tile.current-player {
+  border: 2px solid #cccccc; /* White-gray border for current player */
+  box-shadow: 0 0 10px rgba(204, 204, 204, 0.3); /* Subtle glow effect */
 }
 
 .player-tile.active {
-  border: 2px solid #ffa500; /* Yellow-orange border */
-  box-shadow: 0 0 15px #ffa500; /* Glow effect */
+  border: 2px solid #ffa500; /* Orange border takes precedence */
+  box-shadow: 0 0 15px #ffa500; /* Stronger glow effect */
 }
 
 .player-tile h4 {
@@ -118,6 +124,13 @@ body {
   margin: 5px 0 0;
   font-size: 0.9em;
   color: #ccc;
+}
+
+.player-tile .role-text {
+  margin: 5px 0 0;
+  font-size: 1.2em;
+  color: #f2f0e6; /* Golden color for the role */
+  font-weight: bold;
 }
 
 .indian-attack {
