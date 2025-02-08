@@ -21,6 +21,16 @@ body {
   background-color: #2b2b2b;
 }
 
+.app-container.game-started {
+  display: grid;
+  grid-template-columns: 1fr 300px;  /* Restore two-column layout */
+  gap: 20px;
+  padding: 20px;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+}
+
 .lobby-container {
   text-align: center;
   max-width: 500px;
@@ -66,6 +76,11 @@ body {
   flex-direction: column;
   align-items: center;
   padding: 20px;
+  background-color: #2b2b2b;
+  border-radius: 10px;
+  padding: 20px;
+  overflow-y: auto;
+  position: relative; /* Add this */
 }
 
 .centered-name {
@@ -248,5 +263,83 @@ body {
 .board-status {
   margin: 20px 0;
   text-align: center;
+}
+
+.game-log {
+  background-color: #1a1a1a;
+  border-radius: 10px;
+  padding: 15px;
+  height: fit-content;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+  margin: auto 0; /* Center vertically in the column */
+  position: sticky; /* Keep it visible while scrolling */
+  top: 50%; /* Center vertically */
+  transform: translateY(-50%); /* Perfect vertical centering */
+}
+
+.game-log h3 {
+  margin: 0 0 10px 0;
+  color: #ffd700;
+  border-bottom: 1px solid #333;
+  padding-bottom: 5px;
+  flex-shrink: 0; /* Prevent header from shrinking */
+}
+
+.log-entries {
+  overflow-y: auto;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  padding-right: 5px;
+  scroll-behavior: smooth;
+}
+
+.log-content {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: auto; /* Push content to bottom */
+}
+
+.log-entry {
+  padding: 5px;
+  border-radius: 5px;
+  background-color: #2b2b2b;
+  font-size: 0.9em;
+  line-height: 1.4;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Update scrollbar to be more visible */
+.log-entries::-webkit-scrollbar {
+  width: 6px;
+  background: #1a1a1a;
+}
+
+.log-entries::-webkit-scrollbar-thumb {
+  background: #666;
+  border-radius: 3px;
+}
+
+.log-entries::-webkit-scrollbar-thumb:hover {
+  background: #888;
+}
+
+.log-time {
+  color: #666;
+  margin-right: 8px;
+  font-size: 0.8em;
+}
+
+.log-message {
+  color: #ddd;
 }
 

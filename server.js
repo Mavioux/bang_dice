@@ -98,6 +98,9 @@ const updatePlayerHealth = (playerId, change) => {
   player.health = newHealth;
   player.isAlive = newHealth > 0;
   broadcastHealthUpdates(io);
+  
+  emitGameLog(io, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
+  
   return true;
 };
 
@@ -179,6 +182,11 @@ const broadcastArrowState = () => {
       arrows: player.arrows
     }))
   });
+};
+
+// Add helper function for game logging
+const emitGameLog = (io, message) => {
+  io.emit('gameLog', message);
 };
 
 // Handle Socket.io connections
@@ -279,6 +287,12 @@ socket.on('rollDice', (keptDiceData = {}) => {
   const diceResult = [];
   const newDiceStates = {};
   
+  // Log kept dice if any
+  if (Object.keys(keptDiceData.dice).length > 0) {
+    const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
+    emitGameLog(io, `${players[socket.id].name} kept: ${keptDiceSymbols}`);
+  }
+
   // Handle kept dice first
   Object.entries(keptDiceData.dice).forEach(([index, value]) => {
     diceResult.push(value);
@@ -296,6 +310,10 @@ socket.on('rollDice', (keptDiceData = {}) => {
     newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'resolved' : 'rolled';
   }
 
+  // Log new roll
+  const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
+  emitGameLog(io, `${players[socket.id].name} rolled: ${newDiceSymbols}`);
+
   // Store current dice state
   gameState.currentDice = diceResult;
   gameState.diceStates = newDiceStates;
@@ -308,6 +326,7 @@ socket.on('rollDice', (keptDiceData = {}) => {
     updatePlayerHealth(gameState.currentTurn, -1);
     gameState.dynamiteDamageDealt = true;
     gameState.rerollsLeft = 0; // Force end of rolling
+    emitGameLog(io, `💥 ${players[socket.id].name} was hit by dynamite explosion!`);
   }
 
   // Emit updated game state
@@ -409,6 +428,9 @@ const progressToNextTurn = (io) => {
   gameState.diceStates = initialStates;
   broadcastArrowState();  // Ensure arrow state is synced on turn change
 
+  const nextPlayer = players[gameState.playerOrder[nextIndex]];
+  emitGameLog(io, `🎲 Turn changed to ${nextPlayer.name}`);
+  
   // Emit turn update and initial dice roll
   io.emit('updateTurn', gameState.currentTurn);
   io.emit('diceResult', {

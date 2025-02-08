@@ -46,6 +46,7 @@ export default function App() {
   const [diceStates, setDiceStates] = useState({}); // Maps dice index to its state
   const [boardArrows, setBoardArrows] = useState(9);
   const [playerArrows, setPlayerArrows] = useState({});
+  const [gameLog, setGameLog] = useState([]);
 
   useEffect(() => {
     const handlers = {
@@ -93,6 +94,16 @@ export default function App() {
         });
         setPlayerArrows(arrowMap);
       },
+      gameLog: (message) => {
+        setGameLog(prevLog => {
+          const newEntry = {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            message,
+            timestamp: new Date().toLocaleTimeString()
+          };
+          return [...prevLog, newEntry];
+        });
+      }
     };
 
     // Register all handlers
@@ -106,7 +117,7 @@ export default function App() {
         socket.off(event);
       });
     };
-  }, []);  // Empty dependency array since handlers are stable
+  }, []);  // Remove logCounter dependency
 
   // Add useEffect to handle auto-resolution of dynamites
   useEffect(() => {
@@ -234,6 +245,23 @@ export default function App() {
     </div>
   );
 
+  // Update the GameLog component
+  const GameLog = () => (
+    <div className="game-log">
+      <h3>Game Log</h3>
+      <div className="log-entries">
+        <div className="log-content">
+          {[...gameLog].reverse().map(entry => (
+            <div key={entry.id} className="log-entry">
+              <span className="log-time">[{entry.timestamp}]</span>
+              <span className="log-message">{entry.message}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className={`app-container ${gameStarted ? 'game-started' : ''}`}>
       {!gameStarted ? (
@@ -273,74 +301,77 @@ export default function App() {
           )}
         </div>
       ) : (
-        <div className="game-container">
-          {/* Centered Player Name */}
-          <h2 className="centered-name">{playerName}</h2>
+        <>
+          <div className="game-container">
+            {/* Centered Player Name */}
+            <h2 className="centered-name">{playerName}</h2>
 
-          {/* Player tiles */}
-          <div className="player-tiles">
-            {reorderPlayers(players, socket.id).map((player, index) => 
-              renderPlayerTile(player, index)
-            )}
-          </div>
-
-          {/* Dice Rolling Section */}
-          <div className="dice-section">
-            <h3>{socket.id === currentTurn ? 'Your Dice' : `${players.find(p => p.socketId === currentTurn)?.name}'s Dice`}</h3>
-            <div className="dice-column">
-              {diceResult.map((dice, index) => (
-                <div key={index} className="dice-container">
-                  <div
-                    className={`dice ${diceStates[index]}`}
-                    onClick={() => socket.id === currentTurn && toggleDiceState(index)}
-                    style={{ cursor: socket.id === currentTurn ? 'pointer' : 'default' }}
-                  >
-                    {dice}
-                  </div>
-                  {/* Only show reverse button for non-dynamite kept dice */}
-                  {diceStates[index] === DICE_STATES.KEPT && 
-                   dice !== DYNAMITE_SYMBOL && 
-                   socket.id === currentTurn && (
-                    <button
-                      className="reverse-button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleDiceState(index, true);
-                      }}
-                      title="Reverse to rolled state"
-                    >
-                      ↩️
-                    </button>
-                  )}
-                </div>
-              ))}
+            {/* Player tiles */}
+            <div className="player-tiles">
+              {reorderPlayers(players, socket.id).map((player, index) => 
+                renderPlayerTile(player, index)
+              )}
             </div>
-            {socket.id === currentTurn && (
-              <div className="dice-actions">
-                <button 
-                  onClick={rollDice} 
-                  disabled={rerollsLeft === 0 || hasThreeOrMoreDynamites()}
-                >
-                  Roll ({rerollsLeft} rerolls left)
-                  {hasThreeOrMoreDynamites() && ' - Dynamites Exploded!'}
-                </button>
+
+            {/* Dice Rolling Section */}
+            <div className="dice-section">
+              <h3>{socket.id === currentTurn ? 'Your Dice' : `${players.find(p => p.socketId === currentTurn)?.name}'s Dice`}</h3>
+              <div className="dice-column">
+                {diceResult.map((dice, index) => (
+                  <div key={index} className="dice-container">
+                    <div
+                      className={`dice ${diceStates[index]}`}
+                      onClick={() => socket.id === currentTurn && toggleDiceState(index)}
+                      style={{ cursor: socket.id === currentTurn ? 'pointer' : 'default' }}
+                    >
+                      {dice}
+                    </div>
+                    {/* Only show reverse button for non-dynamite kept dice */}
+                    {diceStates[index] === DICE_STATES.KEPT && 
+                    dice !== DYNAMITE_SYMBOL && 
+                    socket.id === currentTurn && (
+                      <button
+                        className="reverse-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleDiceState(index, true);
+                        }}
+                        title="Reverse to rolled state"
+                      >
+                        ↩️
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
+              {socket.id === currentTurn && (
+                <div className="dice-actions">
+                  <button 
+                    onClick={rollDice} 
+                    disabled={rerollsLeft === 0 || hasThreeOrMoreDynamites()}
+                  >
+                    Roll ({rerollsLeft} rerolls left)
+                    {hasThreeOrMoreDynamites() && ' - Dynamites Exploded!'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="board-status">
+              <p className="arrows-on-board">
+                Arrows on Board: {boardArrows}
+              </p>
+            </div>
+
+            {arrowsInPlay > 0 && (
+              <p>Arrows in Play: {arrowsInPlay}</p>
+            )}
+            {indianAttackActive && (
+              <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>
             )}
           </div>
-
-          <div className="board-status">
-            <p className="arrows-on-board">
-              Arrows on Board: {boardArrows}
-            </p>
-          </div>
-
-          {arrowsInPlay > 0 && (
-            <p>Arrows in Play: {arrowsInPlay}</p>
-          )}
-          {indianAttackActive && (
-            <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>
-          )}
-        </div>
+          <GameLog />
+        </>
       )}
     </div>
   );
