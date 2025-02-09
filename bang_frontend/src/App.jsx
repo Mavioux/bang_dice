@@ -344,24 +344,26 @@ export default function App() {
       return;
     }
   
-    // Modified gun resolution logic
-    if (currentState === DICE_STATES.KEPT && diceResult[index] === '🔫') {
-      const keptGuns = Object.entries(diceStates).filter(([i, state]) => 
-        diceResult[i] === '🔫' && state === DICE_STATES.KEPT
-      ).length;
-  
-      // If we have 3 or more kept guns, only allow resolution as part of gatling
-      if (keptGuns >= 3) {
-        const newDiceStates = { 
-          ...diceStates,
-          [index]: DICE_STATES.RESOLVED 
-        };
-        setDiceStates(newDiceStates);
-        socket.emit('updateDiceStates', { states: newDiceStates });
+    // Modified gun/targeting logic for kept dice
+    if (currentState === DICE_STATES.KEPT) {
+      if (diceResult[index] === '1') {
+        setIsTargeting(true);
+        setTargetDistance(1);
+        return;
+      }
+      if (diceResult[index] === '2') {
+        const aliveCount = players.filter(p => p.isAlive).length;
+        if (aliveCount <= 3) {
+          setIsTargeting(true);
+          setTargetDistance(1); // Treat dice '2' as '1'
+        } else {
+          setIsTargeting(true);
+          setTargetDistance(2);
+        }
         return;
       }
     }
-
+  
     // Modified state progression
     if (currentState === DICE_STATES.KEPT && diceResult[index] === '🍺') {
       setIsResolvingBeer(true);
