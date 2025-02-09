@@ -15,22 +15,32 @@ const DICE_STATES = {
   RESOLVED: 'resolved'
 };
 
-// Utility function to reorder the players array so the current player is in the center
+// Updated reorderPlayers: filter out dead players and log them.
 const reorderPlayers = (players, currentPlayerId) => {
-  const currentPlayerIndex = players.findIndex((player) => player.socketId === currentPlayerId);
-  if (currentPlayerIndex === -1) return players; // Fallback: return the original array if the current player is not found
-
-  // Calculate the number of players before and after the current player
-  const numPlayers = players.length;
+  const alivePlayers = players.filter(player => player.isAlive);
+  const deadPlayers = players.filter(player => !player.isAlive);
+  if (deadPlayers.length > 0) {
+    console.log('[GameLog] Eliminated players (ignored in order):', deadPlayers.map(p => ({ name: p.name, role: p.role })));
+  }
+  const currentPlayerIndex = alivePlayers.findIndex(player => player.socketId === currentPlayerId);
+  if (currentPlayerIndex === -1) return alivePlayers; // fallback if current player not found
+  const numPlayers = alivePlayers.length;
   const half = Math.floor(numPlayers / 2);
-
   const reorderedPlayers = [];
   for (let i = 0; i < numPlayers; i++) {
-    const index = (currentPlayerIndex - half + i + numPlayers) % numPlayers;
-    reorderedPlayers.push(players[index]);
+    const index = (currentPlayerIndex + half + i + numPlayers) % numPlayers;
+    reorderedPlayers.push(alivePlayers[index]);
   }
-
   return reorderedPlayers;
+};
+
+const logPlayersOrder = (players) => {
+  console.log('Frontend Players Order:', players.map(p => ({
+    name: p.name,
+    id: p.socketId,
+    isAlive: p.isAlive,
+    health: p.health
+  })));
 };
 
 // Dice symbols and emojis
@@ -59,7 +69,10 @@ export default function App() {
 
   useEffect(() => {
     const handlers = {
-      playerListUpdate: (updatedPlayers) => setPlayers(updatedPlayers),
+      playerListUpdate: (updatedPlayers) => {
+        setPlayers(updatedPlayers);
+        logPlayersOrder(updatedPlayers);  // Log when players update
+      },
       assignRole: (data) => setRole(data.role),
       gameStarted: (players) => {
         setGameStarted(true);
@@ -80,20 +93,13 @@ export default function App() {
       },
       diceStateUpdate: (data) => setDiceStates(data.states),
       updateHealth: (healthData) => {
-        setPlayers(currentPlayers => {
-          const updatedPlayers = [...currentPlayers];
-          healthData.forEach(data => {
-            const playerIndex = updatedPlayers.findIndex(p => p.socketId === data.socketId);
-            if (playerIndex !== -1) {
-              updatedPlayers[playerIndex] = {
-                ...updatedPlayers[playerIndex],
-                health: data.health,
-                maxHealth: data.maxHealth
-              };
-            }
-          });
-          return updatedPlayers;
-        });
+        setPlayers(currentPlayers =>
+          currentPlayers.map(player => {
+            // Find corresponding health update
+            const update = healthData.find(data => data.socketId === player.socketId);
+            return update ? { ...player, health: update.health, maxHealth: update.maxHealth, isAlive: update.isAlive } : player;
+          })
+        );
       },
       arrowUpdate: (data) => {
         setBoardArrows(data.arrowsOnBoard);
@@ -278,22 +284,18 @@ export default function App() {
     return player.health < player.maxHealth;
   };
 
-  // Add helper function to calculate player distance
-  const getPlayerDistance = (currentIndex, targetIndex, totalPlayers) => {
-    const distance = Math.min(
-      Math.abs(currentIndex - targetIndex),
-      totalPlayers - Math.abs(currentIndex - targetIndex)
-    );
-    return distance;
+  // Replace the old getPlayerDistance with the updated version:
+  const getPlayerDistance = (orderedPlayers, currentPlayerSocketId, targetIndex) => {
+    const currentIndex = orderedPlayers.findIndex(p => p.socketId === currentPlayerSocketId);
+    const clockwise = (targetIndex - currentIndex + orderedPlayers.length) % orderedPlayers.length;
+    const counterClockwise = (currentIndex - targetIndex + orderedPlayers.length) % orderedPlayers.length;
+    return Math.min(clockwise, counterClockwise);
   };
 
-  // Add helper function to check if player is targetable
-  const isPlayerTargetable = (player, index) => {
-    if (!isTargeting || player.socketId === socket.id) return false;
-    
-    const currentPlayerIndex = players.findIndex(p => p.socketId === socket.id);
-    const distance = getPlayerDistance(currentPlayerIndex, index, players.length);
-    
+  // Update isPlayerTargetable to work with the ordered players array:
+  const isPlayerTargetable = (player, index, orderedPlayers) => {
+    if (!isTargeting || !player.isAlive || player.socketId === socket.id) return false;
+    const distance = getPlayerDistance(orderedPlayers, socket.id, index);
     return distance === targetDistance;
   };
 
@@ -403,35 +405,55 @@ export default function App() {
     socket.emit('updateDiceStates', { states: newDiceStates });
   };
 
-  const renderPlayerTile = (player, index) => (
-    <div
-      key={index}
-      className={`player-tile 
-        ${player.socketId === currentTurn ? 'active' : ''} 
-        ${player.socketId === socket.id ? 'current-player' : ''}
-        ${isResolvingBeer ? 'healable' : ''}
-        ${isPlayerTargetable(player, index) ? 'targetable' : ''}`}
-      onClick={() => {
-        if (isResolvingBeer) {
-          handleBeerResolution(player.socketId);
-        } else if (isPlayerTargetable(player, index)) {
-          handleShoot(player.socketId);
-        }
-      }}
-    >
-      <h4>{player.name}</h4>
-      <div className="health-display">
-        <span className="health-value">❤️ {player.health}</span>
-        <span className="health-max">({player.maxHealth})</span>
+  // Modify renderPlayerTile to accept the orderedPlayers array:
+  const renderPlayerTile = (player, index, orderedPlayers) => {
+    if (!player.isAlive) {
+      return (
+        <div
+          key={index}
+          className="player-tile dead"
+        >
+          <h4>{player.name}</h4>
+          <div className="health-display">
+            <span className="health-value">❤️ 0</span>
+            <span className="health-max">({player.maxHealth})</span>
+          </div>
+          <p className="role-text">{player.role}</p>
+          <p>💀 Eliminated</p>
+        </div>
+      );
+    }
+  
+    return (
+      <div
+        key={index}
+        className={`player-tile 
+          ${player.socketId === currentTurn ? 'active' : ''} 
+          ${player.socketId === socket.id ? 'current-player' : ''}
+          ${isResolvingBeer ? 'healable' : ''}
+          ${isPlayerTargetable(player, index, orderedPlayers) ? 'targetable' : ''}`}
+        onClick={() => {
+          if (isResolvingBeer) {
+            handleBeerResolution(player.socketId);
+          } else if (isPlayerTargetable(player, index, orderedPlayers)) {
+            handleShoot(player.socketId);
+          }
+        }}
+      >
+        <h4>{player.name}</h4>
+        <div className="health-display">
+          <span className="health-value">❤️ {player.health}</span>
+          <span className="health-max">({player.maxHealth})</span>
+        </div>
+        <div className="arrow-display">
+          <span className="arrow-count">🏹 {playerArrows[player.socketId] || 0}</span>
+        </div>
+        {(player.socketId === socket.id || player.role === 'Sheriff') && (
+          <p className="role-text">{player.role}</p>
+        )}
       </div>
-      <div className="arrow-display">
-        <span className="arrow-count">🏹 {playerArrows[player.socketId] || 0}</span>
-      </div>
-      {(player.socketId === socket.id || player.role === 'Sheriff') && (
-        <p className="role-text">{player.role}</p>
-      )}
-    </div>
-  );
+    );
+  };
 
   // Update the GameLog component
   const GameLog = () => (
@@ -527,9 +549,14 @@ export default function App() {
             
             {/* Player tiles */}
             <div className="player-tiles">
-              {reorderPlayers(players, socket.id).map((player, index) => 
-                renderPlayerTile(player, index)
-              )}
+              {(() => {
+                const orderedPlayers = reorderPlayers(players, socket.id);
+                logPlayersOrder(orderedPlayers);  // Log whenever display order changes
+                return orderedPlayers.map((player, index) =>
+                  // Pass the orderedPlayers array to renderPlayerTile
+                  renderPlayerTile(player, index, orderedPlayers)
+                );
+              })()}
             </div>
 
             {/* Dice Rolling Section */}

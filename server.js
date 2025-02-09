@@ -24,7 +24,7 @@ const PORT = process.env.PORT || 3000;
 const TOTAL_ARROWS = 9;
 const ARROW_SYMBOL = '🏹';
 const DYNAMITE_SYMBOL = '💣';
-const PLAYER_BASE_HEALTH = 8;
+const PLAYER_BASE_HEALTH = 2;
 const SHERIFF_EXTRA_HEALTH = 2;
 const QUESTION_MARK_SYMBOL = '❓';
 const GUN_SYMBOL = '🔫';
@@ -97,6 +97,25 @@ const updatePlayerHealth = (playerId, change) => {
   const newHealth = Math.min(Math.max(0, player.health + change), player.maxHealth);
   player.health = newHealth;
   player.isAlive = newHealth > 0;
+
+  // Handle player elimination
+  if (!player.isAlive) {
+    emitGameLog(io, `💀 ${player.name} was eliminated!`);
+    // Remove player from turn order
+    const playerIndex = gameState.playerOrder.indexOf(playerId);
+    if (playerIndex !== -1) {
+      gameState.playerOrder.splice(playerIndex, 1);
+    }
+    
+    // If current player died, move to next turn
+    if (gameState.currentTurn === playerId) {
+      progressToNextTurn(io);
+    }
+    
+    // Check for game end conditions here
+    // TODO: Implement win conditions based on roles
+  }
+
   broadcastHealthUpdates(io);
   emitGameLog(io, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
   
@@ -107,7 +126,8 @@ const broadcastHealthUpdates = (io) => {
   const healthData = Object.values(players).map(player => ({
     socketId: player.socketId,
     health: player.health,
-    maxHealth: player.maxHealth
+    maxHealth: player.maxHealth,
+    isAlive: player.isAlive   // Include isAlive so front end updates accordingly
   }));
   io.emit('updateHealth', healthData);
 };
@@ -288,6 +308,12 @@ io.on('connection', (socket) => {
 
     // Update playerOrder with the shuffled order
     gameState.playerOrder = shuffledPlayers.map((player) => player.socketId);
+
+    // Add debug logging
+    console.log('Initial Player Order:', gameState.playerOrder.map(id => ({
+      id,
+      name: players[id].name
+    })));
 
     // Find the Sheriff and set them as the current turn
     const sheriff = shuffledPlayers.find((player) => player.role === 'Sheriff');
@@ -543,6 +569,13 @@ const progressToNextTurn = (io) => {
   const nextPlayer = players[gameState.playerOrder[nextIndex]];
   emitGameLog(io, `🎲 Turn changed to ${nextPlayer.name}`);
   
+  // Add debug logging
+  console.log('Server Player Order:', gameState.playerOrder.map(id => ({
+    id,
+    name: players[id].name,
+    isAlive: players[id].isAlive
+  })));
+
   io.emit('updateTurn', gameState.currentTurn);
   io.emit('diceResult', {
     dice: initialDice,
