@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "cd bang_frontend && npm install && npm run build",
+    "build": "npm install && cd bang_frontend && npm install && npm run build",
     "dev": "nodemon server.js",
     "dev:frontend": "cd bang_frontend && npm run dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:frontend\""
@@ -16,8 +16,8 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "concurrently": "^8.2.0"
+    "concurrently": "^8.2.0",
+    "nodemon": "^3.0.1"
   },
   "engines": {
     "node": ">=18.0.0"
