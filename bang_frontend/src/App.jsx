@@ -54,6 +54,8 @@ export default function App() {
   const [gameLog, setGameLog] = useState([]);
   const [selectedBeerTarget, setSelectedBeerTarget] = useState(null);
   const [isResolvingBeer, setIsResolvingBeer] = useState(false);
+  const [isTargeting, setIsTargeting] = useState(false);
+  const [targetDistance, setTargetDistance] = useState(null);
 
   useEffect(() => {
     const handlers = {
@@ -276,6 +278,52 @@ export default function App() {
     return player.health < player.maxHealth;
   };
 
+  // Add helper function to calculate player distance
+  const getPlayerDistance = (currentIndex, targetIndex, totalPlayers) => {
+    const distance = Math.min(
+      Math.abs(currentIndex - targetIndex),
+      totalPlayers - Math.abs(currentIndex - targetIndex)
+    );
+    return distance;
+  };
+
+  // Add helper function to check if player is targetable
+  const isPlayerTargetable = (player, index) => {
+    if (!isTargeting || player.socketId === socket.id) return false;
+    
+    const currentPlayerIndex = players.findIndex(p => p.socketId === socket.id);
+    const distance = getPlayerDistance(currentPlayerIndex, index, players.length);
+    
+    return distance === targetDistance;
+  };
+
+  // Add handler for shooting
+  const handleShoot = (targetPlayerId) => {
+    if (!isTargeting || socket.id !== currentTurn) return;
+  
+    // Find the first kept 1 or 2 die
+    const shootIndex = diceResult.findIndex((dice, index) => 
+      (dice === '1' || dice === '2') && diceStates[index] === DICE_STATES.KEPT
+    );
+  
+    if (shootIndex === -1) return;
+  
+    // Update dice state and notify server
+    const newDiceStates = {
+      ...diceStates,
+      [shootIndex]: DICE_STATES.RESOLVED
+    };
+  
+    setDiceStates(newDiceStates);
+    socket.emit('shoot', { 
+      targetPlayerId,
+      diceIndex: shootIndex,
+      newStates: newDiceStates
+    });
+    setIsTargeting(false);
+    setTargetDistance(null);
+  };
+
   // Update the toggleDiceState function with fixed gun resolution logic
   const toggleDiceState = (index, reverse = false) => {
     if (socket.id !== currentTurn) return;
@@ -317,6 +365,19 @@ export default function App() {
       setIsResolvingBeer(true);
       return;
     }
+
+    if (currentState === DICE_STATES.KEPT) {
+      if (diceResult[index] === '1') {
+        setIsTargeting(true);
+        setTargetDistance(1);
+        return;
+      }
+      if (diceResult[index] === '2') {
+        setIsTargeting(true);
+        setTargetDistance(2);
+        return;
+      }
+    }
   
     // Normal state progression
     let newState;
@@ -348,10 +409,13 @@ export default function App() {
       className={`player-tile 
         ${player.socketId === currentTurn ? 'active' : ''} 
         ${player.socketId === socket.id ? 'current-player' : ''}
-        ${isResolvingBeer ? 'healable' : ''}`}
+        ${isResolvingBeer ? 'healable' : ''}
+        ${isPlayerTargetable(player, index) ? 'targetable' : ''}`}
       onClick={() => {
         if (isResolvingBeer) {
           handleBeerResolution(player.socketId);
+        } else if (isPlayerTargetable(player, index)) {
+          handleShoot(player.socketId);
         }
       }}
     >

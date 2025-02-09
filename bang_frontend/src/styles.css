@@ -137,6 +137,17 @@ body {
   box-shadow: 0 0 15px rgba(33, 150, 243, 0.5);
 }
 
+.player-tile.targetable {
+  cursor: pointer;
+  border: 2px solid #ff4444;
+  box-shadow: 0 0 10px rgba(255, 68, 68, 0.3);
+}
+
+.player-tile.targetable:hover {
+  background-color: #2d2d2d;
+  box-shadow: 0 0 15px rgba(255, 68, 68, 0.5);
+}
+
 .player-tile h4 {
   margin: 0;
   font-size: 1.2em;

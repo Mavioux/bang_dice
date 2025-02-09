@@ -338,7 +338,7 @@ io.on('connection', (socket) => {
     const numNewDice = 6 - diceResult.length;
     for (let i = 0; i < numNewDice; i++) {
       const randomIndex = Math.floor(Math.random() * diceSymbols.length);
-      const rolledValue = diceSymbols[5];
+      const rolledValue = diceSymbols[randomIndex];
       diceResult.push(rolledValue);
       
       // Automatically resolve dynamites
@@ -456,6 +456,38 @@ io.on('connection', (socket) => {
     } else {
       emitGameLog(io, `🍺 ${players[socket.id].name} tried to heal ${targetPlayer.name}, but they were already at max health!`);
     }
+
+    // Broadcast updated dice states
+    io.emit('diceStateUpdate', {
+      states: newStates,
+      currentPlayer: socket.id
+    });
+
+    // Check if turn should end
+    if (checkAllDiceResolved(newStates)) {
+      progressToNextTurn(io);
+    }
+  });
+
+  // Add new socket handler for shooting
+  socket.on('shoot', ({ targetPlayerId, diceIndex, newStates }) => {
+    if (socket.id !== gameState.currentTurn) {
+      socket.emit('gameError', 'It is not your turn.');
+      return;
+    }
+
+    const targetPlayer = players[targetPlayerId];
+    if (!targetPlayer) {
+      socket.emit('gameError', 'Invalid target player.');
+      return;
+    }
+
+    // Update the dice states
+    gameState.diceStates = newStates;
+
+    // Deal damage to target player
+    updatePlayerHealth(targetPlayerId, -1);
+    emitGameLog(io, `🎯 ${players[socket.id].name} shot ${targetPlayer.name}`);
 
     // Broadcast updated dice states
     io.emit('diceStateUpdate', {
