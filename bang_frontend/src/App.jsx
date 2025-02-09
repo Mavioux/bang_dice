@@ -72,6 +72,32 @@ export default function App() {
   const [isTargeting, setIsTargeting] = useState(false);
   const [targetDistance, setTargetDistance] = useState(null);
 
+  const navigateToRoom = (roomId) => {
+    window.location.href = `/room/${roomId}`;
+  };
+
+  // Handle create room
+  const handleCreateRoom = () => {
+    // Generate random room ID (you can adjust the length)
+    const randomRoomId = Math.random().toString(36).substring(2, 8);
+    navigateToRoom(randomRoomId);
+  };
+
+  // Handle join room
+  const handleJoinRoom = (e) => {
+    e.preventDefault();
+    const roomId = e.target.roomId.value.trim();
+    if (roomId) {
+      navigateToRoom(roomId);
+    }
+  };
+
+  // Add copy to clipboard function
+  const copyRoomId = () => {
+    navigator.clipboard.writeText(roomId);
+    alert('Room ID copied to clipboard!');
+  };
+
   // Main socket effect - now with proper conditional logic inside
   useEffect(() => {
     if (!isInRoom) return;
@@ -229,8 +255,27 @@ export default function App() {
   if (!isInRoom) {
     return (
       <div className="app-container">
-        <h1>Welcome to Bang! The Dice Game</h1>
-        <p>Please join a game room at /room/[room-id]</p>
+        <div className="landing-container">
+          <h1>Welcome to Bang! The Dice Game</h1>
+          <div className="landing-buttons">
+            <button onClick={handleCreateRoom} className="button create-button">
+              Create a Room
+            </button>
+            <div className="join-form">
+              <form onSubmit={handleJoinRoom}>
+                <input
+                  type="text"
+                  name="roomId"
+                  placeholder="Enter Room ID"
+                  className="input-field"
+                />
+                <button type="submit" className="button join-button">
+                  Join Room
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -558,6 +603,14 @@ export default function App() {
       {!gameStarted ? (
         <div className="lobby-container">
           <h1 className="title">🎲 Bang! The Dice Game 🎯</h1>
+          {isInRoom && (
+            <div className="room-id-display">
+              <span>Room ID: {roomId}</span>
+              <button onClick={copyRoomId} className="copy-button">
+                📋 Copy
+              </button>
+            </div>
+          )}
           <input
             type="text"
             placeholder="Enter your name"

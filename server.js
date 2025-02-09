@@ -51,7 +51,34 @@ const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'D
 
 // Serve a basic response
 app.get('/', (req, res) => {
-  res.send('<h1>Welcome to Bang! The Dice Game</h1><p>Join a game at /room/{room-id}</p>');
+  res.send(`
+    <html>
+      <head>
+        <title>Bang! The Dice Game</title>
+        <style>
+          body {
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+          }
+          .container {
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Welcome to Bang! The Dice Game</h1>
+          <p>Please use the React app to create or join a room</p>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // Helper Functions (move these before socket handlers)
@@ -380,7 +407,7 @@ io.on('connection', (socket) => {
     // Log kept dice if any
     if (Object.keys(keptDiceData.dice).length > 0) {
       const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
-      emitGameLog(io, `${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
+      emitGameLog(room, `${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
     }
 
     // Handle kept dice first
@@ -402,7 +429,7 @@ io.on('connection', (socket) => {
 
     // Log new roll
     const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
-    emitGameLog(io, `${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
+    emitGameLog(room, `${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
 
     // Store current dice state
     room.gameState.currentDice = diceResult;
@@ -416,7 +443,7 @@ io.on('connection', (socket) => {
       updatePlayerHealth(room.gameState.currentTurn, -1, room);
       room.gameState.dynamiteDamageDealt = true;
       room.gameState.rerollsLeft = 0; // Force end of rolling
-      emitGameLog(io, `💥 ${room.players[socket.id].name} was hit by dynamite explosion!`);
+      emitGameLog(room, `💥 ${room.players[socket.id].name} was hit by dynamite explosion!`);
     }
 
     // Emit updated game state
@@ -519,9 +546,9 @@ io.on('connection', (socket) => {
     // Try to heal the target player
     if (targetPlayer.health < targetPlayer.maxHealth) {
       updatePlayerHealth(targetPlayerId, 1, room);
-      emitGameLog(io, `🍺 ${room.players[socket.id].name} healed ${targetPlayer.name}`);
+      emitGameLog(room, `🍺 ${room.players[socket.id].name} healed ${targetPlayer.name}`);
     } else {
-      emitGameLog(io, `🍺 ${room.players[socket.id].name} tried to heal ${targetPlayer.name, room}, but they were already at max health!`);
+      emitGameLog(room, `🍺 ${room.players[socket.id].name} tried to heal ${targetPlayer.name, room}, but they were already at max health!`);
     }
 
     // Broadcast updated dice states
@@ -557,7 +584,7 @@ io.on('connection', (socket) => {
 
     // Deal damage to target player
     updatePlayerHealth(targetPlayerId, -1, room);
-    emitGameLog(io, `🎯 ${room.players[socket.id].name} shot ${targetPlayer.name}`);
+    emitGameLog(room, `🎯 ${room.players[socket.id].name} shot ${targetPlayer.name}`);
 
     // Broadcast updated dice states
     io.to(currentRoom).emit('diceStateUpdate', {
