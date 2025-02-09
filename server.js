@@ -2,12 +2,16 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 
 // Enable CORS for all routes
 app.use(cors());
+
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, 'bang_frontend/dist')));
 
 // Initialize rooms storage
 const rooms = new Map();
@@ -613,6 +617,11 @@ io.on('connection', (socket) => {
       }
     }
   });
+});
+
+// The catch-all handler - must be after all other routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'bang_frontend/dist/index.html'));
 });
 
 // Start the server

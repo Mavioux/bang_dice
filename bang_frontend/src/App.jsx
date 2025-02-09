@@ -102,8 +102,8 @@ export default function App() {
   useEffect(() => {
     if (!isInRoom) return;
 
-    // Initialize socket connection
-    socket = io('http://localhost:3000', {
+    // Initialize socket connection with relative URL
+    socket = io({
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
