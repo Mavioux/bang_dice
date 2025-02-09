@@ -9,6 +9,9 @@ const server = http.createServer(app);
 // Enable CORS for all routes
 app.use(cors());
 
+// Initialize rooms storage
+const rooms = new Map();
+
 const io = new Server(server, {
   cors: {
     origin: 'http://localhost:5173',
@@ -24,7 +27,7 @@ const PORT = process.env.PORT || 3000;
 const TOTAL_ARROWS = 9;
 const ARROW_SYMBOL = '🏹';
 const DYNAMITE_SYMBOL = '💣';
-const PLAYER_BASE_HEALTH = 2;
+const PLAYER_BASE_HEALTH = 8;
 const SHERIFF_EXTRA_HEALTH = 2;
 const QUESTION_MARK_SYMBOL = '❓';
 const GUN_SYMBOL = '🔫';
@@ -48,7 +51,7 @@ const roles = ['Sheriff', 'Renegade', 'Outlaw', 'Outlaw', 'Deputy', 'Outlaw', 'D
 
 // Serve a basic response
 app.get('/', (req, res) => {
-  res.send('Bang! The Dice Game server is running.');
+  res.send('<h1>Welcome to Bang! The Dice Game</h1><p>Join a game at /room/{room-id}</p>');
 });
 
 // Helper Functions (move these before socket handlers)
@@ -87,49 +90,44 @@ const autoResolveDynamites = (dice, states) => {
   return newStates;
 };
 
-const updatePlayerHealth = (playerId, change) => {
-  const player = players[playerId];
+const updatePlayerHealth = (playerId, change, room) => {
+  const player = room.players[playerId];
   if (!player) {
-    console.log(`Cannot update health`);
+    console.log(`Cannot update health for player ${playerId}`);
     return false;
   }
+
   console.log(`Updating health for ${player.name} (${playerId}) by ${change}`);
   const newHealth = Math.min(Math.max(0, player.health + change), player.maxHealth);
   player.health = newHealth;
   player.isAlive = newHealth > 0;
 
-  // Handle player elimination
   if (!player.isAlive) {
-    emitGameLog(io, `💀 ${player.name} was eliminated!`);
-    // Remove player from turn order
-    const playerIndex = gameState.playerOrder.indexOf(playerId);
+    emitGameLog(room, `💀 ${player.name} was eliminated!`);
+    const playerIndex = room.gameState.playerOrder.indexOf(playerId);
     if (playerIndex !== -1) {
-      gameState.playerOrder.splice(playerIndex, 1);
+      room.gameState.playerOrder.splice(playerIndex, 1);
     }
     
-    // If current player died, move to next turn
-    if (gameState.currentTurn === playerId) {
-      progressToNextTurn(io);
+    if (room.gameState.currentTurn === playerId) {
+      progressToNextTurn(room);
     }
-    
-    // Check for game end conditions here
-    // TODO: Implement win conditions based on roles
   }
 
-  broadcastHealthUpdates(io);
-  emitGameLog(io, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
+  broadcastHealthUpdates(room);
+  emitGameLog(room, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
   
   return true;
 };
 
-const broadcastHealthUpdates = (io) => {
-  const healthData = Object.values(players).map(player => ({
+const broadcastHealthUpdates = (room) => {
+  const healthData = Object.values(room.players).map(player => ({
     socketId: player.socketId,
     health: player.health,
     maxHealth: player.maxHealth,
-    isAlive: player.isAlive   // Include isAlive so front end updates accordingly
+    isAlive: player.isAlive
   }));
-  io.emit('updateHealth', healthData);
+  io.to(room.id).emit('updateHealth', healthData);
 };
 
 // Add helper function to count resolved dynamites
@@ -148,8 +146,7 @@ const checkDynamiteEnd = (dice, states) => {
 };
 
 // Update the arrow handling function to only count newly rolled arrows
-const handleArrowRoll = (dice, states, playerId) => {
-  // Only count arrows from newly rolled dice (not kept or resolved)
+const handleArrowRoll = (dice, states, playerId, room) => {
   const arrowCount = dice.reduce((count, die, index) => {
     if (die === ARROW_SYMBOL && states[index] === 'rolled') {
       return count + 1;
@@ -161,40 +158,39 @@ const handleArrowRoll = (dice, states, playerId) => {
 
   console.log(`Processing ${arrowCount} new arrows for player ${playerId}`);
 
-  // Count how many arrows will trigger indian attack
-  const arrowsUntilEmpty = Math.min(arrowCount, gameState.arrowsOnBoard);
+  const arrowsUntilEmpty = Math.min(arrowCount, room.gameState.arrowsOnBoard);
   // Add arrows to current player
-  players[playerId].arrows += arrowsUntilEmpty;
-  gameState.arrowsOnBoard -= arrowsUntilEmpty;
+  room.players[playerId].arrows += arrowsUntilEmpty;
+  room.gameState.arrowsOnBoard -= arrowsUntilEmpty;
 
   // Check if Indian Attack should trigger
-  if (gameState.arrowsOnBoard === 0) {
+  if (room.gameState.arrowsOnBoard === 0) {
     // Deal damage based on arrows
-    Object.values(players).forEach(player => {
+    Object.values(room.players).forEach(player => {
       if (player.arrows > 0) {
-        updatePlayerHealth(player.socketId, -player.arrows);
-        player.arrows = 0;  // Reset arrows after damage
+        updatePlayerHealth(player.socketId, -player.arrows, room);
+        player.arrows = 0;
       }
     });
     // Reset board arrows
-    gameState.arrowsOnBoard = TOTAL_ARROWS;
+    room.gameState.arrowsOnBoard = TOTAL_ARROWS;
   }
 
-  // Handle remaining arrows from current roll
+  // Handle remaining arrows
   const remainingArrows = arrowCount - arrowsUntilEmpty;
   if (remainingArrows > 0) {
-    players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
-    gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
+    room.players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
+    room.gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
   }
 
-  broadcastArrowState();
+  broadcastArrowState(room);
 };
 
 // Add broadcast function for arrow updates
-const broadcastArrowState = () => {
-  io.emit('arrowUpdate', {
-    arrowsOnBoard: gameState.arrowsOnBoard,
-    playerArrows: Object.entries(players).map(([id, player]) => ({
+const broadcastArrowState = (room) => {
+  io.to(room.id).emit('arrowUpdate', {
+    arrowsOnBoard: room.gameState.arrowsOnBoard,
+    playerArrows: Object.entries(room.players).map(([id, player]) => ({
       socketId: id,
       arrows: player.arrows
     }))
@@ -202,8 +198,8 @@ const broadcastArrowState = () => {
 };
 
 // Add helper function for game logging
-const emitGameLog = (io, message) => {
-  io.emit('gameLog', message);
+const emitGameLog = (room, message) => {
+  io.to(room.id).emit('gameLog', message);
 };
 
 // Add new helper function to check for gatling condition
@@ -215,65 +211,95 @@ const checkGatlingAvailable = (dice, states) => {
 };
 
 // Update the handleGatling function to ensure it only uses exactly 3 guns when resolving a gatling
-const handleGatling = (playerId, dice, states) => {
-  // Find all kept gun dice and resolve them all
+const handleGatling = (playerId, dice, states, room) => {
   const newStates = { ...states };
   
-  // Resolve all kept gun dice
   Object.entries(states).forEach(([index, state]) => {
     if (dice[index] === GUN_SYMBOL && state === 'kept') {
       newStates[index] = 'resolved';
     }
   });
 
-  // Deal damage to all other players
-  Object.values(players).forEach(player => {
+  Object.values(room.players).forEach(player => {
     if (player.socketId !== playerId && player.isAlive) {
-      updatePlayerHealth(player.socketId, -1);
+      updatePlayerHealth(player.socketId, -1, room);
     }
   });
 
-  // Return arrows to the pile
-  if (players[playerId].arrows > 0) {
-    gameState.arrowsOnBoard += players[playerId].arrows;
-    players[playerId].arrows = 0;
-    broadcastArrowState();
-    emitGameLog(io, `${players[playerId].name} returned all arrows to the pile`);
+  if (room.players[playerId].arrows > 0) {
+    room.gameState.arrowsOnBoard += room.players[playerId].arrows;
+    room.players[playerId].arrows = 0;
+    broadcastArrowState(room);
+    emitGameLog(room, `${room.players[playerId].name} returned all arrows to the pile`);
   }
 
   return newStates;
 };
 
+// Add room state initialization
+const createNewRoom = (roomId) => ({
+  id: roomId,
+  players: {},
+  gameState: {
+    started: false,
+    playerOrder: [],
+    currentTurn: null,
+    diceStates: {},
+    rerollsLeft: 3,
+    currentDice: [],
+    resolvedDynamites: 0,
+    dynamiteDamageDealt: false,
+    arrowsOnBoard: TOTAL_ARROWS,
+  }
+});
+
 // Handle Socket.io connections
 io.on('connection', (socket) => {
   console.log(`🔌 A user connected: ${socket.id}`);
-  
-  // Test emit to confirm connection
-  socket.emit('testConnection', 'You are connected to the server!');
+  let currentRoom = null;
 
-  // Join Game
+  socket.on('joinRoom', (roomId) => {
+    // Create room if it doesn't exist
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, createNewRoom(roomId));
+    }
+    
+    // Join socket.io room
+    socket.join(roomId);
+    currentRoom = roomId;
+    
+    socket.emit('roomJoined', roomId);
+  });
+
+  // Modify existing event handlers to be room-aware
   socket.on('joinGame', (playerName) => {
-    players[socket.id] = { 
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    
+    room.players[socket.id] = {
       name: playerName,
       role: null,
       health: PLAYER_BASE_HEALTH,
-      maxHealth: PLAYER_BASE_HEALTH, // Store max health
-      arrows: 0,  // Initialize arrow count
+      maxHealth: PLAYER_BASE_HEALTH,
+      arrows: 0,
       isAlive: true,
-      socketId: socket.id // Add socket.id to the player object
+      socketId: socket.id
     };
-    console.log(`🎮 ${playerName} joined the game.`);
-    io.emit('playerListUpdate', Object.values(players));
+    
+    io.to(currentRoom).emit('playerListUpdate', Object.values(room.players));
   });
 
   // Start Game & Assign Roles
   socket.on('startGame', () => {
-    if (Object.keys(players).length < 4) {
-      io.emit('gameError', 'Need at least 4 players to start the game.');
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    
+    if (Object.keys(room.players).length < 4) {
+      io.to(currentRoom).emit('gameError', 'Need at least 4 players to start the game.');
       return;
     }
 
-    const numPlayers = Object.keys(players).length;
+    const numPlayers = Object.keys(room.players).length;
 
     // Slice the roles array to the number of players
     const rolesForGame = roles.slice(0, numPlayers);
@@ -284,12 +310,12 @@ io.on('connection', (socket) => {
       [rolesForGame[i], rolesForGame[j]] = [rolesForGame[j], rolesForGame[i]];
     }
 
-    Object.keys(players).forEach((id, index) => {
-      players[id].role = rolesForGame[index];
+    Object.keys(room.players).forEach((id, index) => {
+      room.players[id].role = rolesForGame[index];
       // If player is Sheriff, add extra health
       if (rolesForGame[index] === 'Sheriff') {
-        players[id].health += SHERIFF_EXTRA_HEALTH;
-        players[id].maxHealth += SHERIFF_EXTRA_HEALTH;
+        room.players[id].health += SHERIFF_EXTRA_HEALTH;
+        room.players[id].maxHealth += SHERIFF_EXTRA_HEALTH;
       }
       io.to(id).emit('assignRole', { 
         id, 
@@ -298,52 +324,55 @@ io.on('connection', (socket) => {
     });
 
     // Broadcast initial health states to all players
-    broadcastHealthUpdates(io);
+    broadcastHealthUpdates(room);
 
-    gameState.started = true;
+    room.gameState.started = true;
 
     // Convert players object to an array and shuffle it
-    const playersArray = Object.values(players);
+    const playersArray = Object.values(room.players);
     const shuffledPlayers = shuffleArray(playersArray);
 
     // Update playerOrder with the shuffled order
-    gameState.playerOrder = shuffledPlayers.map((player) => player.socketId);
+    room.gameState.playerOrder = shuffledPlayers.map((player) => player.socketId);
 
     // Add debug logging
-    console.log('Initial Player Order:', gameState.playerOrder.map(id => ({
+    console.log('Initial Player Order:', room.gameState.playerOrder.map(id => ({
       id,
-      name: players[id].name
+      name: room.players[id].name
     })));
 
     // Find the Sheriff and set them as the current turn
     const sheriff = shuffledPlayers.find((player) => player.role === 'Sheriff');
     if (sheriff) {
-      gameState.currentTurn = sheriff.socketId;
+      room.gameState.currentTurn = sheriff.socketId;
     } else {
       // Fallback: If no Sheriff is found, use the first player
-      gameState.currentTurn = gameState.playerOrder[0];
+      room.gameState.currentTurn = room.gameState.playerOrder[0];
     }
 
     // Notify all players of the current turn and game start
-    io.emit('updateTurn', gameState.currentTurn);
-    io.emit('gameStarted', shuffledPlayers); // Send the shuffled players array to all clients
+    io.to(currentRoom).emit('updateTurn', room.gameState.currentTurn);
+    io.to(currentRoom).emit('gameStarted', shuffledPlayers); // Send the shuffled players array to all clients
   });
 
   // Modify the rollDice handler
   socket.on('rollDice', (keptDiceData = {}) => {
-    if (socket.id !== gameState.currentTurn) {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+
+    if (socket.id !== room.gameState.currentTurn) {
       socket.emit('gameError', 'It is not your turn to roll the dice.');
       return;
     }
 
     // Check rerolls and dynamites before proceeding
-    if (gameState.rerollsLeft <= 0 || checkDynamiteEnd(gameState.currentDice, gameState.diceStates)) {
+    if (room.gameState.rerollsLeft <= 0 || checkDynamiteEnd(room.gameState.currentDice, room.gameState.diceStates)) {
       socket.emit('gameError', 'Cannot roll - either no rerolls left or dynamites exploded!');
       return;
     }
 
     // Decrease rerolls first
-    gameState.rerollsLeft--;
+    room.gameState.rerollsLeft--;
 
     const diceResult = [];
     const newDiceStates = {};
@@ -351,7 +380,7 @@ io.on('connection', (socket) => {
     // Log kept dice if any
     if (Object.keys(keptDiceData.dice).length > 0) {
       const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
-      emitGameLog(io, `${players[socket.id].name} kept: ${keptDiceSymbols}`);
+      emitGameLog(io, `${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
     }
 
     // Handle kept dice first
@@ -373,45 +402,48 @@ io.on('connection', (socket) => {
 
     // Log new roll
     const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
-    emitGameLog(io, `${players[socket.id].name} rolled: ${newDiceSymbols}`);
+    emitGameLog(io, `${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
 
     // Store current dice state
-    gameState.currentDice = diceResult;
-    gameState.diceStates = newDiceStates;
+    room.gameState.currentDice = diceResult;
+    room.gameState.diceStates = newDiceStates;
 
     // Handle arrows right after rolling, passing the new dice states
-    handleArrowRoll(diceResult, newDiceStates, socket.id);
+    handleArrowRoll(diceResult, newDiceStates, socket.id, room);
 
     // Check dynamite damage only if not already dealt this turn
-    if (!gameState.dynamiteDamageDealt && countResolvedDynamites(diceResult, newDiceStates) >= 3) {
-      updatePlayerHealth(gameState.currentTurn, -1);
-      gameState.dynamiteDamageDealt = true;
-      gameState.rerollsLeft = 0; // Force end of rolling
-      emitGameLog(io, `💥 ${players[socket.id].name} was hit by dynamite explosion!`);
+    if (!room.gameState.dynamiteDamageDealt && countResolvedDynamites(diceResult, newDiceStates) >= 3) {
+      updatePlayerHealth(room.gameState.currentTurn, -1, room);
+      room.gameState.dynamiteDamageDealt = true;
+      room.gameState.rerollsLeft = 0; // Force end of rolling
+      emitGameLog(io, `💥 ${room.players[socket.id].name} was hit by dynamite explosion!`);
     }
 
     // Emit updated game state
-    io.emit('diceResult', {
+    io.to(currentRoom).emit('diceResult', {
       dice: diceResult,
       states: newDiceStates,
       currentPlayer: socket.id,
-      rerollsLeft: gameState.rerollsLeft
+      rerollsLeft: room.gameState.rerollsLeft
     });
 
     // Check if turn should end (all dice resolved and no rerolls left)
-    if (gameState.rerollsLeft === 0 && checkAllDiceResolved(gameState.diceStates)) {
-      progressToNextTurn(io);
+    if (room.gameState.rerollsLeft === 0 && checkAllDiceResolved(room.gameState.diceStates)) {
+      progressToNextTurn(room);
     }
   });
 
   // Simplified dice selection update handler
   socket.on('updateKeptDice', (data) => {
-    if (socket.id !== gameState.currentTurn) {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+
+    if (socket.id !== room.gameState.currentTurn) {
       socket.emit('gameError', 'It is not your turn to manage dice.');
       return;
     }
 
-    io.emit('keptDiceUpdate', {
+    io.to(currentRoom).emit('keptDiceUpdate', {
       indices: data.indices,
       currentPlayer: socket.id
     });
@@ -419,119 +451,140 @@ io.on('connection', (socket) => {
 
   // Add state reset to end turn handler
   socket.on('endTurn', () => {
-    if (socket.id !== gameState.currentTurn) return;
-    progressToNextTurn(io);
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+
+    if (socket.id !== room.gameState.currentTurn) return;
+    progressToNextTurn(room);
   });
 
   // Simplify updateDiceStates handler
   socket.on('updateDiceStates', (data) => {
-    if (socket.id !== gameState.currentTurn) {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+
+    if (socket.id !== room.gameState.currentTurn) {
       socket.emit('gameError', 'It is not your turn to manage dice.');
       return;
     }
 
-    let newStates = { ...gameState.diceStates, ...data.states };
+    let newStates = { ...room.gameState.diceStates, ...data.states };
 
     // Check if this update includes resolving a gun and if gatling is available
     const isResolvingGun = Object.entries(data.states).some(([index, state]) => 
-      gameState.currentDice[index] === GUN_SYMBOL && state === 'resolved'
+      room.gameState.currentDice[index] === GUN_SYMBOL && state === 'resolved'
     );
 
-    if (isResolvingGun && checkGatlingAvailable(gameState.currentDice, gameState.diceStates)) {
-      newStates = handleGatling(socket.id, gameState.currentDice, newStates);
-      emitGameLog(io, `💥 ${players[socket.id].name} fired the Gatling Gun!`);
+    if (isResolvingGun && checkGatlingAvailable(room.gameState.currentDice, room.gameState.diceStates)) {
+      newStates = handleGatling(socket.id, room.gameState.currentDice, newStates, room);
+      emitGameLog(room, `💥 ${room.players[socket.id].name} fired the Gatling Gun!`);
     }
 
-    gameState.diceStates = newStates;
+    room.gameState.diceStates = newStates;
 
     // Only check if we need to end rolling
-    if (countResolvedDynamites(gameState.currentDice, newStates) >= 3) {
-      gameState.rerollsLeft = 0;
+    if (countResolvedDynamites(room.gameState.currentDice, newStates) >= 3) {
+      room.gameState.rerollsLeft = 0;
     }
 
-    io.emit('diceStateUpdate', {
+    io.to(currentRoom).emit('diceStateUpdate', {
       states: newStates,
       currentPlayer: socket.id
     });
 
     if (checkAllDiceResolved(newStates)) {
-      progressToNextTurn(io);
+      progressToNextTurn(room);
     }
   });
 
   // Add new event handler inside io.on('connection', (socket) => {
   socket.on('resolveBeer', ({ targetPlayerId, diceIndex, newStates }) => {
-    if (socket.id !== gameState.currentTurn) {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+
+    if (socket.id !== room.gameState.currentTurn) {
       socket.emit('gameError', 'It is not your turn.');
       return;
     }
 
-    const targetPlayer = players[targetPlayerId];
+    const targetPlayer = room.players[targetPlayerId];
     if (!targetPlayer) {
       socket.emit('gameError', 'Invalid target player.');
       return;
     }
 
     // Update the dice states
-    gameState.diceStates = newStates;
+    room.gameState.diceStates = newStates;
 
     // Try to heal the target player
     if (targetPlayer.health < targetPlayer.maxHealth) {
-      updatePlayerHealth(targetPlayerId, 1);
-      emitGameLog(io, `🍺 ${players[socket.id].name} healed ${targetPlayer.name}`);
+      updatePlayerHealth(targetPlayerId, 1, room);
+      emitGameLog(io, `🍺 ${room.players[socket.id].name} healed ${targetPlayer.name}`);
     } else {
-      emitGameLog(io, `🍺 ${players[socket.id].name} tried to heal ${targetPlayer.name}, but they were already at max health!`);
+      emitGameLog(io, `🍺 ${room.players[socket.id].name} tried to heal ${targetPlayer.name, room}, but they were already at max health!`);
     }
 
     // Broadcast updated dice states
-    io.emit('diceStateUpdate', {
+    io.to(currentRoom).emit('diceStateUpdate', {
       states: newStates,
       currentPlayer: socket.id
     });
 
     // Check if turn should end
     if (checkAllDiceResolved(newStates)) {
-      progressToNextTurn(io);
+      progressToNextTurn(room);
     }
   });
 
   // Add new socket handler for shooting
   socket.on('shoot', ({ targetPlayerId, diceIndex, newStates }) => {
-    if (socket.id !== gameState.currentTurn) {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+
+    if (socket.id !== room.gameState.currentTurn) {
       socket.emit('gameError', 'It is not your turn.');
       return;
     }
 
-    const targetPlayer = players[targetPlayerId];
+    const targetPlayer = room.players[targetPlayerId];
     if (!targetPlayer) {
       socket.emit('gameError', 'Invalid target player.');
       return;
     }
 
     // Update the dice states
-    gameState.diceStates = newStates;
+    room.gameState.diceStates = newStates;
 
     // Deal damage to target player
-    updatePlayerHealth(targetPlayerId, -1);
-    emitGameLog(io, `🎯 ${players[socket.id].name} shot ${targetPlayer.name}`);
+    updatePlayerHealth(targetPlayerId, -1, room);
+    emitGameLog(io, `🎯 ${room.players[socket.id].name} shot ${targetPlayer.name}`);
 
     // Broadcast updated dice states
-    io.emit('diceStateUpdate', {
+    io.to(currentRoom).emit('diceStateUpdate', {
       states: newStates,
       currentPlayer: socket.id
     });
 
     // Check if turn should end
     if (checkAllDiceResolved(newStates)) {
-      progressToNextTurn(io);
+      progressToNextTurn(room);
     }
   });
 
   // Disconnect Handling
   socket.on('disconnect', () => {
     console.log(`❌ User disconnected: ${socket.id}`);
-    delete players[socket.id];
-    io.emit('playerListUpdate', Object.values(players));
+    if (currentRoom && rooms.has(currentRoom)) {
+      const room = rooms.get(currentRoom);
+      delete room.players[socket.id];
+      
+      // Remove room if empty
+      if (Object.keys(room.players).length === 0) {
+        rooms.delete(currentRoom);
+      } else {
+        io.to(currentRoom).emit('playerListUpdate', Object.values(room.players));
+      }
+    }
   });
 });
 
@@ -541,17 +594,17 @@ server.listen(PORT, () => {
 });
 
 // Simplify helper functions
-const progressToNextTurn = (io) => {
-  gameState.diceStates = {};
-  gameState.rerollsLeft = 3; // Reset to initial value
-  gameState.currentDice = [];
-  gameState.resolvedDynamites = 0;  // Reset dynamite counter
-  gameState.dynamiteDamageDealt = false;  // Reset the flag for new turn
+const progressToNextTurn = (room) => {
+  room.gameState.diceStates = {};
+  room.gameState.rerollsLeft = 3; // Reset to initial value
+  room.gameState.currentDice = [];
+  room.gameState.resolvedDynamites = 0;  // Reset dynamite counter
+  room.gameState.dynamiteDamageDealt = false;  // Reset the flag for new turn
   
   // Find next player's turn
-  const currentIndex = gameState.playerOrder.indexOf(gameState.currentTurn);
-  const nextIndex = (currentIndex + 1) % gameState.playerOrder.length;
-  gameState.currentTurn = gameState.playerOrder[nextIndex];
+  const currentIndex = room.gameState.playerOrder.indexOf(room.gameState.currentTurn);
+  const nextIndex = (currentIndex + 1) % room.gameState.playerOrder.length;
+  room.gameState.currentTurn = room.gameState.playerOrder[nextIndex];
 
   // Initialize all dice as question marks with 'initial' state
   const initialDice = Array(6).fill(QUESTION_MARK_SYMBOL);
@@ -562,25 +615,25 @@ const progressToNextTurn = (io) => {
     initialStates[i] = 'initial';
   }
 
-  gameState.diceStates = initialStates;
-  gameState.currentDice = initialDice;
-  broadcastArrowState();
+  room.gameState.diceStates = initialStates;
+  room.gameState.currentDice = initialDice;
+  broadcastArrowState(room);
 
-  const nextPlayer = players[gameState.playerOrder[nextIndex]];
-  emitGameLog(io, `🎲 Turn changed to ${nextPlayer.name}`);
+  const nextPlayer = room.players[room.gameState.playerOrder[nextIndex]];
+  emitGameLog(room, `🎲 Turn changed to ${nextPlayer.name}`);
   
   // Add debug logging
-  console.log('Server Player Order:', gameState.playerOrder.map(id => ({
+  console.log('Server Player Order:', room.gameState.playerOrder.map(id => ({
     id,
-    name: players[id].name,
-    isAlive: players[id].isAlive
+    name: room.players[id].name,
+    isAlive: room.players[id].isAlive
   })));
 
-  io.emit('updateTurn', gameState.currentTurn);
-  io.emit('diceResult', {
+  io.to(room.id).emit('updateTurn', room.gameState.currentTurn);
+  io.to(room.id).emit('diceResult', {
     dice: initialDice,
     states: initialStates,
-    currentPlayer: gameState.currentTurn,
-    rerollsLeft: gameState.rerollsLeft
+    currentPlayer: room.gameState.currentTurn,
+    rerollsLeft: room.gameState.rerollsLeft
   });
 };

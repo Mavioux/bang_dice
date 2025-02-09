@@ -2,11 +2,8 @@ import { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import './styles.css';
 
-const socket = io('http://localhost:3000', {
-  reconnection: true,
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000,
-});
+// Initialize socket without connecting
+let socket;
 
 const DICE_STATES = {
   INITIAL: 'initial',
@@ -47,6 +44,14 @@ const logPlayersOrder = (players) => {
 const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫'];
 
 export default function App() {
+  // Extract room ID outside of useEffect
+  const path = window.location.pathname;
+  const roomMatch = path.match(/^\/room\/([^/]+)/);
+  const isInRoom = !!roomMatch;
+  const roomId = roomMatch ? roomMatch[1] : null;
+
+  // All state declarations must be before any conditional returns
+  const [connected, setConnected] = useState(false);
   const [playerName, setPlayerName] = useState('');
   const [players, setPlayers] = useState([]);
   const [role, setRole] = useState(null);
@@ -67,7 +72,27 @@ export default function App() {
   const [isTargeting, setIsTargeting] = useState(false);
   const [targetDistance, setTargetDistance] = useState(null);
 
+  // Main socket effect - now with proper conditional logic inside
   useEffect(() => {
+    if (!isInRoom) return;
+
+    // Initialize socket connection
+    socket = io('http://localhost:3000', {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    socket.on('connect', () => {
+      console.log('Connected to server');
+      socket.emit('joinRoom', roomId);
+    });
+
+    socket.on('roomJoined', (roomId) => {
+      console.log(`Joined room: ${roomId}`);
+      setConnected(true);
+    });
+
     const handlers = {
       playerListUpdate: (updatedPlayers) => {
         setPlayers(updatedPlayers);
@@ -128,14 +153,17 @@ export default function App() {
 
     // Cleanup
     return () => {
+      if (socket) socket.disconnect();
       Object.keys(handlers).forEach(event => {
         socket.off(event);
       });
     };
-  }, []);  // Remove logCounter dependency
+  }, [isInRoom, roomId]); // Add proper dependencies
 
-  // Add useEffect to handle auto-resolution of dynamites
+  // Other useEffect hooks must also be before any conditional returns
   useEffect(() => {
+    if (!socket) return;
+    // Add useEffect to handle auto-resolution of dynamites
     if (rerollsLeft === 0 && diceResult.length > 0) {
       const newDiceStates = { ...diceStates };
       let statesChanged = false;
@@ -157,6 +185,7 @@ export default function App() {
   }, [rerollsLeft, diceResult, diceStates]);
 
   useEffect(() => {
+    if (!socket) return;
     const handleConnect = () => {
       console.log('Connected to server');
     };
@@ -195,6 +224,24 @@ export default function App() {
       socket.off('connect_error');
     };
   }, [gameStarted]);
+
+  // Now handle the conditional rendering
+  if (!isInRoom) {
+    return (
+      <div className="app-container">
+        <h1>Welcome to Bang! The Dice Game</h1>
+        <p>Please join a game room at /room/[room-id]</p>
+      </div>
+    );
+  }
+
+  if (!connected) {
+    return (
+      <div className="app-container">
+        <h1>Connecting...</h1>
+      </div>
+    );
+  }
 
   const joinGame = () => {
     if (playerName.trim() !== '') {
