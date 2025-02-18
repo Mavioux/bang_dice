@@ -392,12 +392,15 @@ export default function App() {
 
   // Add handler for shooting
   const handleShoot = (targetPlayerId) => {
+    console.log('Shooting player:', targetPlayerId);
     if (!isTargeting || socket.id !== currentTurn) return;
   
-    // Find the first kept 1 or 2 die
+    // Find the specific die (1 or 2) based on target distance
     const shootIndex = diceResult.findIndex((dice, index) => 
-      (dice === '1' || dice === '2') && diceStates[index] === DICE_STATES.KEPT
+      dice === targetDistance.toString() && diceStates[index] === DICE_STATES.KEPT
     );
+
+    console.log('Taret distance string:', targetDistance.toString());
   
     if (shootIndex === -1) return;
   
