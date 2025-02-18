@@ -134,7 +134,7 @@ const updatePlayerHealth = (playerId, change, room) => {
   player.isAlive = newHealth > 0;
 
   if (!player.isAlive) {
-    emitGameLog(room, `💀 ${player.name} was eliminated!`);
+    emitGameLog(room, `💀 ${player.name} (${player.role}) was eliminated!`);
     const playerIndex = room.gameState.playerOrder.indexOf(playerId);
     if (playerIndex !== -1) {
       room.gameState.playerOrder.splice(playerIndex, 1);
@@ -143,11 +143,13 @@ const updatePlayerHealth = (playerId, change, room) => {
     if (room.gameState.currentTurn === playerId) {
       progressToNextTurn(room);
     }
+  } else {
+    // Add health change log
+    const healthChangeType = change > 0 ? 'gained' : 'lost';
+    emitGameLog(room, `❤️ ${player.name} ${healthChangeType} ${Math.abs(change)} health (now: ${newHealth}/${player.maxHealth})`);
   }
 
   broadcastHealthUpdates(room);
-  emitGameLog(room, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
-  
   return true;
 };
 
@@ -187,24 +189,30 @@ const handleArrowRoll = (dice, states, playerId, room) => {
 
   if (arrowCount === 0) return;
 
+  const player = room.players[playerId];
   console.log(`Processing ${arrowCount} new arrows for player ${playerId}`);
 
   const arrowsUntilEmpty = Math.min(arrowCount, room.gameState.arrowsOnBoard);
   // Add arrows to current player
-  room.players[playerId].arrows += arrowsUntilEmpty;
+  player.arrows += arrowsUntilEmpty;
   room.gameState.arrowsOnBoard -= arrowsUntilEmpty;
+
+  emitGameLog(room, `🏹 ${player.name} picked up ${arrowsUntilEmpty} arrows (has ${player.arrows} total)`);
 
   // Check if Indian Attack should trigger
   if (room.gameState.arrowsOnBoard === 0) {
+    emitGameLog(room, `⚔️ Indian Attack! All players with arrows take damage equal to their arrows`);
     // Deal damage based on arrows
     Object.values(room.players).forEach(player => {
       if (player.arrows > 0) {
+        emitGameLog(room, `⚔️ ${player.name} has ${player.arrows} arrows`);
         updatePlayerHealth(player.socketId, -player.arrows, room);
         player.arrows = 0;
       }
     });
     // Reset board arrows
     room.gameState.arrowsOnBoard = TOTAL_ARROWS;
+    emitGameLog(room, `🏹 Arrow pile refilled to ${TOTAL_ARROWS}`);
   }
 
   // Handle remaining arrows
@@ -258,10 +266,11 @@ const handleGatling = (playerId, dice, states, room) => {
   });
 
   if (room.players[playerId].arrows > 0) {
-    room.gameState.arrowsOnBoard += room.players[playerId].arrows;
+    const returnedArrows = room.players[playerId].arrows;
+    room.gameState.arrowsOnBoard += returnedArrows;
     room.players[playerId].arrows = 0;
     broadcastArrowState(room);
-    emitGameLog(room, `${room.players[playerId].name} returned all arrows to the pile`);
+    emitGameLog(room, `🏹 ${room.players[playerId].name} returned ${returnedArrows} arrows to the pile`);
   }
 
   return newStates;
@@ -408,7 +417,7 @@ io.on('connection', (socket) => {
     
     if (Object.keys(keptDiceData.dice).length > 0) {
       const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
-      emitGameLog(room, `${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
+      emitGameLog(room, `🎲 ${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
     }
 
     Object.entries(keptDiceData.dice).forEach(([index, value]) => {
@@ -430,7 +439,7 @@ io.on('connection', (socket) => {
 
     // Log new roll
     const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
-    emitGameLog(room, `${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
+    emitGameLog(room, `🎲 ${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
 
     // Store current dice state
     room.gameState.currentDice = diceResult;
@@ -653,7 +662,7 @@ const progressToNextTurn = (room) => {
   broadcastArrowState(room);
 
   const nextPlayer = room.players[room.gameState.playerOrder[nextIndex]];
-  emitGameLog(room, `🎲 Turn changed to ${nextPlayer.name}`);
+  emitGameLog(room, `🎲 Turn changed to ${nextPlayer.name} (${nextPlayer.role})`);
   
   // Add debug logging
   console.log('Server Player Order:', room.gameState.playerOrder.map(id => ({
