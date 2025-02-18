@@ -646,15 +646,12 @@ export default function App() {
       ) : (
         <>
           <div className="game-container">
-            {/* Remove the centered player name section */}
-            
             {/* Player tiles */}
             <div className="player-tiles">
               {(() => {
                 const orderedPlayers = reorderPlayers(players, socket.id);
-                logPlayersOrder(orderedPlayers);  // Log whenever display order changes
+                logPlayersOrder(orderedPlayers);
                 return orderedPlayers.map((player, index) =>
-                  // Pass the orderedPlayers array to renderPlayerTile
                   renderPlayerTile(player, index, orderedPlayers)
                 );
               })()}
@@ -679,7 +676,7 @@ export default function App() {
               )}
             </div>
 
-            <div className="board-status"></div>
+            <div className="board-status">
               <p className="arrows-on-board">
                 Arrows on Board: {boardArrows}
               </p>
