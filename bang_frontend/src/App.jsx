@@ -305,21 +305,20 @@ export default function App() {
       return;
     }
 
-    // Create an object that includes both dice values and states
     const keptDiceData = {
-      dice: {},      // Store actual dice values
-      states: {}     // Store states for reference
+      dice: {},      
+      states: {}     
     };
 
     // Store both dice values and their states
     diceResult.forEach((dice, index) => {
-      if (diceStates[index] === DICE_STATES.KEPT || diceStates[index] === DICE_STATES.RESOLVED) {
+      if (index < 5 && (diceStates[index] === DICE_STATES.KEPT || diceStates[index] === DICE_STATES.RESOLVED)) {
         keptDiceData.dice[index] = dice;
         keptDiceData.states[index] = diceStates[index];
       }
     });
 
-    console.log('Sending kept dice:', keptDiceData); // Debug log
+    console.log('Sending kept dice:', keptDiceData);
     socket.emit('rollDice', keptDiceData);
   };
 
@@ -680,7 +679,7 @@ export default function App() {
               )}
             </div>
 
-            <div className="board-status">
+            <div className="board-status"></div>
               <p className="arrows-on-board">
                 Arrows on Board: {boardArrows}
               </p>

@@ -396,38 +396,35 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Check rerolls and dynamites before proceeding
     if (room.gameState.rerollsLeft <= 0 || checkDynamiteEnd(room.gameState.currentDice, room.gameState.diceStates)) {
       socket.emit('gameError', 'Cannot roll - either no rerolls left or dynamites exploded!');
       return;
     }
 
-    // Decrease rerolls first
     room.gameState.rerollsLeft--;
 
     const diceResult = [];
     const newDiceStates = {};
     
-    // Log kept dice if any
     if (Object.keys(keptDiceData.dice).length > 0) {
       const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
       emitGameLog(room, `${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
     }
 
-    // Handle kept dice first
     Object.entries(keptDiceData.dice).forEach(([index, value]) => {
-      diceResult.push(value);
-      newDiceStates[diceResult.length - 1] = keptDiceData.states[index];
+      if (parseInt(index) < 5) {  // Ensure we only keep dice within the new limit
+        diceResult.push(value);
+        newDiceStates[diceResult.length - 1] = keptDiceData.states[index];
+      }
     });
 
-    // Add new rolled dice
-    const numNewDice = 6 - diceResult.length;
+    // Add new rolled dice up to 5 instead of 6
+    const numNewDice = 5 - diceResult.length;
     for (let i = 0; i < numNewDice; i++) {
       const randomIndex = Math.floor(Math.random() * diceSymbols.length);
       const rolledValue = diceSymbols[randomIndex];
       diceResult.push(rolledValue);
       
-      // Automatically resolve dynamites
       newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'resolved' : 'rolled';
     }
 
