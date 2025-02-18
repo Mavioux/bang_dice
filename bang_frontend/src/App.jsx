@@ -71,6 +71,9 @@ export default function App() {
   const [isResolvingBeer, setIsResolvingBeer] = useState(false);
   const [isTargeting, setIsTargeting] = useState(false);
   const [targetDistance, setTargetDistance] = useState(null);
+  const [gameOver, setGameOver] = useState(false);
+  const [winners, setWinners] = useState([]);
+  const [winMessage, setWinMessage] = useState('');
 
   const navigateToRoom = (roomId) => {
     window.location.href = `/room/${roomId}`;
@@ -169,7 +172,12 @@ export default function App() {
           };
           return [...prevLog, newEntry];
         });
-      }
+      },
+      gameOver: (data) => {
+        setGameOver(true);
+        setWinners(data.winners);
+        setWinMessage(data.message);
+      },
     };
 
     // Register all handlers
@@ -390,17 +398,22 @@ export default function App() {
     return distance === targetDistance;
   };
 
-  // Add handler for shooting
+  // Update handleShoot to allow interchangeable dice when 3 or fewer players
   const handleShoot = (targetPlayerId) => {
-    console.log('Shooting player:', targetPlayerId);
     if (!isTargeting || socket.id !== currentTurn) return;
-  
-    // Find the specific die (1 or 2) based on target distance
-    const shootIndex = diceResult.findIndex((dice, index) => 
-      dice === targetDistance.toString() && diceStates[index] === DICE_STATES.KEPT
-    );
-
-    console.log('Taret distance string:', targetDistance.toString());
+    
+    const aliveCount = players.filter(p => p.isAlive).length;
+    
+    // Find appropriate die based on distance and player count
+    const shootIndex = diceResult.findIndex((dice, index) => {
+      if (diceStates[index] !== DICE_STATES.KEPT) return false;
+      if (aliveCount <= 3) {
+        // When 3 or fewer players, both '1' and '2' can be used
+        return dice === '1' || dice === '2';
+      }
+      // Normal case: match exact distance
+      return dice === targetDistance.toString();
+    });
   
     if (shootIndex === -1) return;
   
@@ -426,6 +439,7 @@ export default function App() {
     if (diceStates[index] === DICE_STATES.INITIAL) return;
   
     const currentState = diceStates[index] || DICE_STATES.ROLLED;
+    const aliveCount = players.filter(p => p.isAlive).length;
     
     if (reverse) {
       if (currentState !== DICE_STATES.KEPT) return;
@@ -440,20 +454,10 @@ export default function App() {
   
     // Modified gun/targeting logic for kept dice
     if (currentState === DICE_STATES.KEPT) {
-      if (diceResult[index] === '1') {
+      if (diceResult[index] === '1' || diceResult[index] === '2') {
         setIsTargeting(true);
-        setTargetDistance(1);
-        return;
-      }
-      if (diceResult[index] === '2') {
-        const aliveCount = players.filter(p => p.isAlive).length;
-        if (aliveCount <= 3) {
-          setIsTargeting(true);
-          setTargetDistance(1); // Treat dice '2' as '1'
-        } else {
-          setIsTargeting(true);
-          setTargetDistance(2);
-        }
+        // If 3 or fewer players alive, all shots are distance 1
+        setTargetDistance(aliveCount <= 3 ? 1 : parseInt(diceResult[index]));
         return;
       }
     }
@@ -471,8 +475,14 @@ export default function App() {
         return;
       }
       if (diceResult[index] === '2') {
-        setIsTargeting(true);
-        setTargetDistance(2);
+        const aliveCount = players.filter(p => p.isAlive).length;
+        if (aliveCount <= 3) {
+          setIsTargeting(true);
+          setTargetDistance(1); // Treat dice '2' as '1'
+        } else {
+          setIsTargeting(true);
+          setTargetDistance(2);
+        }
         return;
       }
     }
@@ -693,6 +703,17 @@ export default function App() {
             )}
           </div>
           <GameLog />
+          {gameOver && (
+            <div className="game-over-overlay">
+              <div className="game-over-content">
+                <h2>Game Over!</h2>
+                <p>{winMessage}</p>
+                <button onClick={() => window.location.reload()}>
+                  Play Again
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
