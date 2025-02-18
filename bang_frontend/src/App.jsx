@@ -74,6 +74,7 @@ export default function App() {
   const [gameOver, setGameOver] = useState(false);
   const [winners, setWinners] = useState([]);
   const [winMessage, setWinMessage] = useState('');
+  const [resolvingDieIndex, setResolvingDieIndex] = useState(null);
 
   const navigateToRoom = (roomId) => {
     window.location.href = `/room/${roomId}`;
@@ -344,26 +345,19 @@ export default function App() {
   const handleBeerResolution = (targetPlayerId) => {
     if (!isResolvingBeer || socket.id !== currentTurn) return;
 
-    // Find the first kept beer die
-    const beerIndex = diceResult.findIndex((dice, index) => 
-      dice === '🍺' && diceStates[index] === DICE_STATES.KEPT
-    );
-
-    if (beerIndex === -1) return;
-
-    // Update dice state and notify server
     const newDiceStates = {
       ...diceStates,
-      [beerIndex]: DICE_STATES.RESOLVED
+      [resolvingDieIndex]: DICE_STATES.RESOLVED
     };
 
     setDiceStates(newDiceStates);
     socket.emit('resolveBeer', { 
       targetPlayerId,
-      diceIndex: beerIndex,
+      diceIndex: resolvingDieIndex,
       newStates: newDiceStates
     });
     setIsResolvingBeer(false);
+    setResolvingDieIndex(null);
   };
 
   // Add helper to check for 3+ dynamites
@@ -404,33 +398,20 @@ export default function App() {
     
     const aliveCount = players.filter(p => p.isAlive).length;
     
-    // Find appropriate die based on distance and player count
-    const shootIndex = diceResult.findIndex((dice, index) => {
-      if (diceStates[index] !== DICE_STATES.KEPT) return false;
-      if (aliveCount <= 3) {
-        // When 3 or fewer players, both '1' and '2' can be used
-        return dice === '1' || dice === '2';
-      }
-      // Normal case: match exact distance
-      return dice === targetDistance.toString();
-    });
-  
-    if (shootIndex === -1) return;
-  
-    // Update dice state and notify server
     const newDiceStates = {
       ...diceStates,
-      [shootIndex]: DICE_STATES.RESOLVED
+      [resolvingDieIndex]: DICE_STATES.RESOLVED
     };
-  
+
     setDiceStates(newDiceStates);
     socket.emit('shoot', { 
       targetPlayerId,
-      diceIndex: shootIndex,
+      diceIndex: resolvingDieIndex,
       newStates: newDiceStates
     });
     setIsTargeting(false);
     setTargetDistance(null);
+    setResolvingDieIndex(null);
   };
 
   // Update the toggleDiceState function with fixed gun resolution logic
@@ -441,6 +422,20 @@ export default function App() {
     const currentState = diceStates[index] || DICE_STATES.ROLLED;
     const aliveCount = players.filter(p => p.isAlive).length;
     
+    // If we're already resolving a different die, move it back to kept state
+    if (resolvingDieIndex !== null && resolvingDieIndex !== index) {
+      const newDiceStates = {
+        ...diceStates,
+        [resolvingDieIndex]: DICE_STATES.KEPT
+      };
+      setDiceStates(newDiceStates);
+      setIsResolvingBeer(false);
+      setIsTargeting(false);
+      setTargetDistance(null);
+      setResolvingDieIndex(null);
+      socket.emit('updateDiceStates', { states: newDiceStates });
+    }
+
     if (reverse) {
       if (currentState !== DICE_STATES.KEPT) return;
       const newDiceStates = {
@@ -456,33 +451,13 @@ export default function App() {
     if (currentState === DICE_STATES.KEPT) {
       if (diceResult[index] === '1' || diceResult[index] === '2') {
         setIsTargeting(true);
-        // If 3 or fewer players alive, all shots are distance 1
         setTargetDistance(aliveCount <= 3 ? 1 : parseInt(diceResult[index]));
+        setResolvingDieIndex(index);
         return;
       }
-    }
-  
-    // Modified state progression
-    if (currentState === DICE_STATES.KEPT && diceResult[index] === '🍺') {
-      setIsResolvingBeer(true);
-      return;
-    }
-
-    if (currentState === DICE_STATES.KEPT) {
-      if (diceResult[index] === '1') {
-        setIsTargeting(true);
-        setTargetDistance(1);
-        return;
-      }
-      if (diceResult[index] === '2') {
-        const aliveCount = players.filter(p => p.isAlive).length;
-        if (aliveCount <= 3) {
-          setIsTargeting(true);
-          setTargetDistance(1); // Treat dice '2' as '1'
-        } else {
-          setIsTargeting(true);
-          setTargetDistance(2);
-        }
+      if (diceResult[index] === '🍺') {
+        setIsResolvingBeer(true);
+        setResolvingDieIndex(index);
         return;
       }
     }
