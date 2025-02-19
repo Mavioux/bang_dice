@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import './styles.css';
 
@@ -42,6 +42,56 @@ const logPlayersOrder = (players) => {
 
 // Dice symbols and emojis
 const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫'];
+
+// Add this new component before the App component
+const GameLog = ({ entries }) => {
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logContainerRef = useRef(null);
+  const firstRenderRef = useRef(true);
+
+  useEffect(() => {
+    if (firstRenderRef.current) {
+      // On first render, scroll to top
+      if (logContainerRef.current) {
+        logContainerRef.current.scrollTop = 0;
+      }
+      firstRenderRef.current = false;
+      return;
+    }
+
+    // After first render, only auto-scroll if user hasn't manually scrolled
+    if (!userHasScrolled && logContainerRef.current) {
+      logContainerRef.current.scrollTop = 0;
+    }
+  }, [entries, userHasScrolled]);
+
+  const handleScroll = (e) => {
+    if (!userHasScrolled) {
+      setUserHasScrolled(true);
+    }
+    
+    const { scrollTop } = e.target;
+    // If we're at the very top, enable auto-scroll
+    setAutoScroll(scrollTop === 0);
+  };
+
+  return (
+    <div className="game-log">
+      <h3>Game Log</h3>
+      <div className="log-entries" ref={logContainerRef} onScroll={handleScroll}>
+        <div className="log-content">
+          {[...entries].reverse().map(entry => (
+            <div key={entry.id} className="log-entry">
+              <span className="log-time">[{entry.timestamp}]</span>
+              <span className="log-message">{entry.message}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function App() {
   // Extract room ID outside of useEffect
@@ -529,29 +579,13 @@ export default function App() {
         <div className="arrow-display">
           <span className="arrow-count">🏹 {playerArrows[player.socketId] || 0}</span>
         </div>
+        {/* Only show role for Sheriff or the player's own role */}
         {(player.socketId === socket.id || player.role === 'Sheriff') && (
           <p className="role-text">{player.role}</p>
         )}
       </div>
     );
   };
-
-  // Update the GameLog component
-  const GameLog = () => (
-    <div className="game-log">
-      <h3>Game Log</h3>
-      <div className="log-entries">
-        <div className="log-content">
-          {[...gameLog].reverse().map(entry => (
-            <div key={entry.id} className="log-entry">
-              <span className="log-time">[{entry.timestamp}]</span>
-              <span className="log-message">{entry.message}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 
   // Add visual indicator for available gatling
   const renderDice = (dice, index) => (
@@ -677,7 +711,7 @@ export default function App() {
               <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>
             )}
           </div>
-          <GameLog />
+          <GameLog entries={gameLog} />
           {gameOver && (
             <div className="game-over-overlay">
               <div className="game-over-content">

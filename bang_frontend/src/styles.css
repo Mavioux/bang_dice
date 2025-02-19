@@ -343,8 +343,8 @@ body {
   background-color: #1a1a1a;
   border-radius: 10px;
   padding: 15px;
-  height: fit-content;
-  max-height: 300px;
+  height: 400px; /* Set a fixed height */
+  overflow: hidden; /* Hide overflow */
   display: flex;
   flex-direction: column;
   box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
@@ -363,11 +363,13 @@ body {
 }
 
 .log-entries {
-  overflow-y: auto;
+  height: calc(100% - 40px); /* Subtract header height */
+  overflow-y: scroll; /* Enable vertical scrolling */
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  padding-right: 5px;
+  padding-right: 10px;
+  margin-right: -10px; /* Compensate for scroll bar */
   scroll-behavior: smooth;
 }
 
