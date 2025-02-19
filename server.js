@@ -777,11 +777,11 @@ const progressToNextTurn = (room) => {
   room.gameState.currentTurn = room.gameState.playerOrder[nextIndex];
 
   // Initialize all dice as question marks with 'initial' state
-  const initialDice = Array(6).fill(QUESTION_MARK_SYMBOL);
+  const initialDice = Array(5).fill(QUESTION_MARK_SYMBOL); // Changed from 6 to 5
   const initialStates = {};
   
   // Set all dice to 'initial' state
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) { // Changed from 6 to 5
     initialStates[i] = 'initial';
   }
 
