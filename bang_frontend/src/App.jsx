@@ -96,6 +96,8 @@ const GameLog = ({ entries }) => {
 export default function App() {
   // Add new state for error messages
   const [errorMessage, setErrorMessage] = useState(null);
+  // Add new state
+  const [disconnectedPlayers, setDisconnectedPlayers] = useState(new Set());
 
   // Extract room ID outside of useEffect
   const path = window.location.pathname;
@@ -178,6 +180,12 @@ export default function App() {
 
     const handlers = {
       playerListUpdate: (updatedPlayers) => {
+        // Remove from disconnected list if player reconnected
+        setDisconnectedPlayers(prev => {
+          const newDisconnected = new Set(prev);
+          updatedPlayers.forEach(p => newDisconnected.delete(p.name));
+          return newDisconnected;
+        });
         setPlayers(updatedPlayers);
         logPlayersOrder(updatedPlayers);  // Log when players update
       },
@@ -232,6 +240,24 @@ export default function App() {
         setWinners(data.winners);
         setWinMessage(data.message);
       },
+      playerDisconnected: (data) => {
+        setDisconnectedPlayers(prev => new Set([...prev, data.name]));
+        setGameLog(prevLog => [...prevLog, {
+          id: Date.now(),
+          message: `👻 ${data.name} disconnected`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      },
+      reconnectionSuccess: (data) => {
+        setGameStarted(data.gameStarted);
+        setRole(data.role);
+        setCurrentTurn(data.currentTurn);
+        if (data.gameState) {
+          setDiceResult(data.gameState.currentDice);
+          setDiceStates(data.gameState.diceStates);
+          setRerollsLeft(data.gameState.rerollsLeft);
+        }
+      }
     };
 
     // Register all handlers
@@ -547,6 +573,8 @@ export default function App() {
 
   // Modify renderPlayerTile to accept the orderedPlayers array:
   const renderPlayerTile = (player, index, orderedPlayers) => {
+    const isDisconnected = disconnectedPlayers.has(player.name);
+    
     if (!player.isAlive) {
       return (
         <div
@@ -570,6 +598,7 @@ export default function App() {
         className={`player-tile 
           ${player.socketId === currentTurn ? 'active' : ''} 
           ${player.socketId === socket.id ? 'current-player' : ''}
+          ${isDisconnected ? 'disconnected' : ''}
           ${isResolvingBeer ? 'healable' : ''}
           ${isPlayerTargetable(player, index, orderedPlayers) ? 'targetable' : ''}`}
         onClick={() => {
@@ -580,7 +609,7 @@ export default function App() {
           }
         }}
       >
-        <h4>{player.name}</h4>
+        <h4>{player.name} {isDisconnected && '👻'}</h4>
         <div className="health-display">
           <span className="health-value">❤️ {player.health}</span>
           <span className="health-max">({player.maxHealth})</span>

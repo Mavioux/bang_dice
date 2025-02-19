@@ -301,7 +301,8 @@ const createNewRoom = (roomId) => ({
     resolvedDynamites: 0,
     dynamiteDamageDealt: false,
     arrowsOnBoard: TOTAL_ARROWS,
-  }
+  },
+  disconnectedPlayers: {}, // Map name -> player data
 });
 
 // Add after other helper functions
@@ -365,7 +366,58 @@ io.on('connection', (socket) => {
     if (!currentRoom) return;
     const room = rooms.get(currentRoom);
     
-    // Check if room is joinable before allowing new players
+    // Check if this is a reconnection
+    if (room.disconnectedPlayers[playerName]) {
+      const disconnectedPlayer = room.disconnectedPlayers[playerName];
+      
+      // Remove from disconnected list
+      delete room.disconnectedPlayers[playerName];
+      
+      // Restore player data with new socket ID
+      room.players[socket.id] = {
+        ...disconnectedPlayer,
+        socketId: socket.id
+      };
+
+      // If this was the current turn player, update the turn
+      if (room.gameState.currentTurn === disconnectedPlayer.socketId) {
+        room.gameState.currentTurn = socket.id;
+      }
+
+      // Update player order array
+      const orderIndex = room.gameState.playerOrder.indexOf(disconnectedPlayer.socketId);
+      if (orderIndex !== -1) {
+        room.gameState.playerOrder[orderIndex] = socket.id;
+      }
+
+      // Send reconnection data to player
+      socket.emit('reconnectionSuccess', {
+        gameStarted: room.gameState.started,
+        role: disconnectedPlayer.role,
+        currentTurn: room.gameState.currentTurn,
+        gameState: room.gameState
+      });
+
+      // Broadcast updated player list to all clients
+      io.to(currentRoom).emit('playerListUpdate', Object.values(room.players));
+      
+      // If game is in progress, broadcast current game state
+      if (room.gameState.started) {
+        io.to(currentRoom).emit('updateTurn', room.gameState.currentTurn);
+        io.to(currentRoom).emit('diceResult', {
+          dice: room.gameState.currentDice,
+          states: room.gameState.diceStates,
+          currentPlayer: room.gameState.currentTurn,
+          rerollsLeft: room.gameState.rerollsLeft
+        });
+        broadcastHealthUpdates(room);
+        broadcastArrowState(room);
+      }
+      
+      return;
+    }
+
+    // Normal new player join logic
     if (!room.joinable) {
       socket.emit('gameError', 'Cannot join - game is already in progress');
       return;
@@ -671,13 +723,31 @@ io.on('connection', (socket) => {
     console.log(`❌ User disconnected: ${socket.id}`);
     if (currentRoom && rooms.has(currentRoom)) {
       const room = rooms.get(currentRoom);
-      delete room.players[socket.id];
+      const player = room.players[socket.id];
       
-      // Remove room if empty
-      if (Object.keys(room.players).length === 0) {
-        rooms.delete(currentRoom);
-      } else {
-        io.to(currentRoom).emit('playerListUpdate', Object.values(room.players));
+      if (player) {
+        // Store disconnected player data
+        room.disconnectedPlayers[player.name] = {
+          ...player
+        };
+        
+        // Remove from active players
+        delete room.players[socket.id];
+        
+        // Emit disconnection event
+        io.to(currentRoom).emit('playerDisconnected', {
+          name: player.name,
+          socketId: socket.id
+        });
+        
+        // Only delete room if no players (connected or disconnected) exist
+        if (Object.keys(room.players).length === 0 && 
+            Object.keys(room.disconnectedPlayers).length === 0) {
+          rooms.delete(currentRoom);
+        } else {
+          // Update remaining clients
+          io.to(currentRoom).emit('playerListUpdate', Object.values(room.players));
+        }
       }
     }
   });
