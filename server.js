@@ -195,7 +195,6 @@ const checkDynamiteEnd = (dice, states) => {
   return dynamiteCount >= 3;
 };
 
-// Update the arrow handling function to only count newly rolled arrows
 const handleArrowRoll = (dice, states, playerId, room) => {
   const arrowCount = dice.reduce((count, die, index) => {
     if (die === ARROW_SYMBOL && states[index] === 'rolled') {
@@ -209,27 +208,31 @@ const handleArrowRoll = (dice, states, playerId, room) => {
   const player = room.players[playerId];
   console.log(`Processing ${arrowCount} new arrows for player ${playerId}`);
 
-  const arrowsUntilEmpty = Math.min(arrowCount, room.gameState.arrowsOnBoard);
-  // Fix: Use player.arrows instead of players.arrows
-  player.arrows += arrowsUntilEmpty;
-  room.gameState.arrowsOnBoard -= arrowsUntilEmpty;
+  let remainingArrowsToAssign = arrowCount;
 
-  emitGameLog(room, `🏹 ${player.name} picked up ${arrowsUntilEmpty} arrows (has ${player.arrows} total)`);
+  while (remainingArrowsToAssign > 0) {
+    const arrowsUntilEmpty = Math.min(remainingArrowsToAssign, room.gameState.arrowsOnBoard);
+    player.arrows += arrowsUntilEmpty;
+    room.gameState.arrowsOnBoard -= arrowsUntilEmpty;
+    remainingArrowsToAssign -= arrowsUntilEmpty;
 
-  // Check if Indian Attack should trigger
-  if (room.gameState.arrowsOnBoard === 0) {
-    emitGameLog(room, `⚔️ Indian Attack! All players with arrows take damage equal to their arrows`);
-    // Deal damage based on arrows
-    Object.values(room.players).forEach(player => {
-      if (player.arrows > 0) {
-        emitGameLog(room, `⚔️ ${player.name} has ${player.arrows}`);
-        updatePlayerHealth(player.socketId, -player.arrows, room);
-        player.arrows = 0;
-      }
-    });
-    // Reset board arrows
-    room.gameState.arrowsOnBoard = TOTAL_ARROWS;
-    emitGameLog(room, `🏹 Arrow pile refilled to ${TOTAL_ARROWS}`);
+    emitGameLog(room, `🏹 ${player.name} picked up ${arrowsUntilEmpty} arrows (has ${player.arrows} total)`);
+
+    // Check if Indian Attack should trigger
+    if (room.gameState.arrowsOnBoard === 0) {
+      emitGameLog(room, `⚔️ Indian Attack! All players with arrows take damage equal to their arrows`);
+      // Deal damage based on arrows
+      Object.values(room.players).forEach(player => {
+        if (player.arrows > 0) {
+          emitGameLog(room, `⚔️ ${player.name} has ${player.arrows}`);
+          updatePlayerHealth(player.socketId, -player.arrows, room);
+          player.arrows = 0;
+        }
+      });
+      // Reset board arrows
+      room.gameState.arrowsOnBoard = TOTAL_ARROWS;
+      emitGameLog(room, `🏹 Arrow pile refilled to ${TOTAL_ARROWS}`);
+    }
   }
 
   broadcastArrowState(room);
