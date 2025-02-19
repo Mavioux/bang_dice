@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "npm install && cd bang_frontend && npm install && npm run build",
+    "build": "npm install --production=false && cd bang_frontend && npm install --production=false && npm run build",
     "dev": "nodemon server.js",
     "dev:frontend": "cd bang_frontend && npm run dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:frontend\""

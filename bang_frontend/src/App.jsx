@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import './styles.css';
 
@@ -43,6 +43,56 @@ const logPlayersOrder = (players) => {
 // Dice symbols and emojis
 const diceSymbols = ['1', '2', '🏹', '💣', '🍺', '🔫'];
 
+// Add this new component before the App component
+const GameLog = ({ entries }) => {
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logContainerRef = useRef(null);
+  const firstRenderRef = useRef(true);
+
+  useEffect(() => {
+    if (firstRenderRef.current) {
+      // On first render, scroll to top
+      if (logContainerRef.current) {
+        logContainerRef.current.scrollTop = 0;
+      }
+      firstRenderRef.current = false;
+      return;
+    }
+
+    // After first render, only auto-scroll if user hasn't manually scrolled
+    if (!userHasScrolled && logContainerRef.current) {
+      logContainerRef.current.scrollTop = 0;
+    }
+  }, [entries, userHasScrolled]);
+
+  const handleScroll = (e) => {
+    if (!userHasScrolled) {
+      setUserHasScrolled(true);
+    }
+    
+    const { scrollTop } = e.target;
+    // If we're at the very top, enable auto-scroll
+    setAutoScroll(scrollTop === 0);
+  };
+
+  return (
+    <div className="game-log">
+      <h3>Game Log</h3>
+      <div className="log-entries" ref={logContainerRef} onScroll={handleScroll}>
+        <div className="log-content">
+          {[...entries].reverse().map(entry => (
+            <div key={entry.id} className="log-entry">
+              <span className="log-time">[{entry.timestamp}]</span>
+              <span className="log-message">{entry.message}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   // Extract room ID outside of useEffect
   const path = window.location.pathname;
@@ -71,6 +121,10 @@ export default function App() {
   const [isResolvingBeer, setIsResolvingBeer] = useState(false);
   const [isTargeting, setIsTargeting] = useState(false);
   const [targetDistance, setTargetDistance] = useState(null);
+  const [gameOver, setGameOver] = useState(false);
+  const [winners, setWinners] = useState([]);
+  const [winMessage, setWinMessage] = useState('');
+  const [resolvingDieIndex, setResolvingDieIndex] = useState(null);
 
   const navigateToRoom = (roomId) => {
     window.location.href = `/room/${roomId}`;
@@ -169,7 +223,12 @@ export default function App() {
           };
           return [...prevLog, newEntry];
         });
-      }
+      },
+      gameOver: (data) => {
+        setGameOver(true);
+        setWinners(data.winners);
+        setWinMessage(data.message);
+      },
     };
 
     // Register all handlers
@@ -305,21 +364,20 @@ export default function App() {
       return;
     }
 
-    // Create an object that includes both dice values and states
     const keptDiceData = {
-      dice: {},      // Store actual dice values
-      states: {}     // Store states for reference
+      dice: {},      
+      states: {}     
     };
 
     // Store both dice values and their states
     diceResult.forEach((dice, index) => {
-      if (diceStates[index] === DICE_STATES.KEPT || diceStates[index] === DICE_STATES.RESOLVED) {
+      if (index < 5 && (diceStates[index] === DICE_STATES.KEPT || diceStates[index] === DICE_STATES.RESOLVED)) {
         keptDiceData.dice[index] = dice;
         keptDiceData.states[index] = diceStates[index];
       }
     });
 
-    console.log('Sending kept dice:', keptDiceData); // Debug log
+    console.log('Sending kept dice:', keptDiceData);
     socket.emit('rollDice', keptDiceData);
   };
 
@@ -337,26 +395,19 @@ export default function App() {
   const handleBeerResolution = (targetPlayerId) => {
     if (!isResolvingBeer || socket.id !== currentTurn) return;
 
-    // Find the first kept beer die
-    const beerIndex = diceResult.findIndex((dice, index) => 
-      dice === '🍺' && diceStates[index] === DICE_STATES.KEPT
-    );
-
-    if (beerIndex === -1) return;
-
-    // Update dice state and notify server
     const newDiceStates = {
       ...diceStates,
-      [beerIndex]: DICE_STATES.RESOLVED
+      [resolvingDieIndex]: DICE_STATES.RESOLVED
     };
 
     setDiceStates(newDiceStates);
     socket.emit('resolveBeer', { 
       targetPlayerId,
-      diceIndex: beerIndex,
+      diceIndex: resolvingDieIndex,
       newStates: newDiceStates
     });
     setIsResolvingBeer(false);
+    setResolvingDieIndex(null);
   };
 
   // Add helper to check for 3+ dynamites
@@ -391,31 +442,26 @@ export default function App() {
     return distance === targetDistance;
   };
 
-  // Add handler for shooting
+  // Update handleShoot to allow interchangeable dice when 3 or fewer players
   const handleShoot = (targetPlayerId) => {
     if (!isTargeting || socket.id !== currentTurn) return;
-  
-    // Find the first kept 1 or 2 die
-    const shootIndex = diceResult.findIndex((dice, index) => 
-      (dice === '1' || dice === '2') && diceStates[index] === DICE_STATES.KEPT
-    );
-  
-    if (shootIndex === -1) return;
-  
-    // Update dice state and notify server
+    
+    const aliveCount = players.filter(p => p.isAlive).length;
+    
     const newDiceStates = {
       ...diceStates,
-      [shootIndex]: DICE_STATES.RESOLVED
+      [resolvingDieIndex]: DICE_STATES.RESOLVED
     };
-  
+
     setDiceStates(newDiceStates);
     socket.emit('shoot', { 
       targetPlayerId,
-      diceIndex: shootIndex,
+      diceIndex: resolvingDieIndex,
       newStates: newDiceStates
     });
     setIsTargeting(false);
     setTargetDistance(null);
+    setResolvingDieIndex(null);
   };
 
   // Update the toggleDiceState function with fixed gun resolution logic
@@ -424,7 +470,22 @@ export default function App() {
     if (diceStates[index] === DICE_STATES.INITIAL) return;
   
     const currentState = diceStates[index] || DICE_STATES.ROLLED;
+    const aliveCount = players.filter(p => p.isAlive).length;
     
+    // If we're already resolving a different die, move it back to kept state
+    if (resolvingDieIndex !== null && resolvingDieIndex !== index) {
+      const newDiceStates = {
+        ...diceStates,
+        [resolvingDieIndex]: DICE_STATES.KEPT
+      };
+      setDiceStates(newDiceStates);
+      setIsResolvingBeer(false);
+      setIsTargeting(false);
+      setTargetDistance(null);
+      setResolvingDieIndex(null);
+      socket.emit('updateDiceStates', { states: newDiceStates });
+    }
+
     if (reverse) {
       if (currentState !== DICE_STATES.KEPT) return;
       const newDiceStates = {
@@ -438,39 +499,15 @@ export default function App() {
   
     // Modified gun/targeting logic for kept dice
     if (currentState === DICE_STATES.KEPT) {
-      if (diceResult[index] === '1') {
+      if (diceResult[index] === '1' || diceResult[index] === '2') {
         setIsTargeting(true);
-        setTargetDistance(1);
+        setTargetDistance(aliveCount <= 3 ? 1 : parseInt(diceResult[index]));
+        setResolvingDieIndex(index);
         return;
       }
-      if (diceResult[index] === '2') {
-        const aliveCount = players.filter(p => p.isAlive).length;
-        if (aliveCount <= 3) {
-          setIsTargeting(true);
-          setTargetDistance(1); // Treat dice '2' as '1'
-        } else {
-          setIsTargeting(true);
-          setTargetDistance(2);
-        }
-        return;
-      }
-    }
-  
-    // Modified state progression
-    if (currentState === DICE_STATES.KEPT && diceResult[index] === '🍺') {
-      setIsResolvingBeer(true);
-      return;
-    }
-
-    if (currentState === DICE_STATES.KEPT) {
-      if (diceResult[index] === '1') {
-        setIsTargeting(true);
-        setTargetDistance(1);
-        return;
-      }
-      if (diceResult[index] === '2') {
-        setIsTargeting(true);
-        setTargetDistance(2);
+      if (diceResult[index] === '🍺') {
+        setIsResolvingBeer(true);
+        setResolvingDieIndex(index);
         return;
       }
     }
@@ -542,29 +579,13 @@ export default function App() {
         <div className="arrow-display">
           <span className="arrow-count">🏹 {playerArrows[player.socketId] || 0}</span>
         </div>
+        {/* Only show role for Sheriff or the player's own role */}
         {(player.socketId === socket.id || player.role === 'Sheriff') && (
           <p className="role-text">{player.role}</p>
         )}
       </div>
     );
   };
-
-  // Update the GameLog component
-  const GameLog = () => (
-    <div className="game-log">
-      <h3>Game Log</h3>
-      <div className="log-entries">
-        <div className="log-content">
-          {[...gameLog].reverse().map(entry => (
-            <div key={entry.id} className="log-entry">
-              <span className="log-time">[{entry.timestamp}]</span>
-              <span className="log-message">{entry.message}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 
   // Add visual indicator for available gatling
   const renderDice = (dice, index) => (
@@ -647,15 +668,12 @@ export default function App() {
       ) : (
         <>
           <div className="game-container">
-            {/* Remove the centered player name section */}
-            
             {/* Player tiles */}
             <div className="player-tiles">
               {(() => {
                 const orderedPlayers = reorderPlayers(players, socket.id);
-                logPlayersOrder(orderedPlayers);  // Log whenever display order changes
+                logPlayersOrder(orderedPlayers);
                 return orderedPlayers.map((player, index) =>
-                  // Pass the orderedPlayers array to renderPlayerTile
                   renderPlayerTile(player, index, orderedPlayers)
                 );
               })()}
@@ -693,7 +711,18 @@ export default function App() {
               <p className="indian-attack">⚠️ Indian Attack Active! ⚠️</p>
             )}
           </div>
-          <GameLog />
+          <GameLog entries={gameLog} />
+          {gameOver && (
+            <div className="game-over-overlay">
+              <div className="game-over-content">
+                <h2>Game Over!</h2>
+                <p>{winMessage}</p>
+                <button onClick={() => window.location.reload()}>
+                  Play Again
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

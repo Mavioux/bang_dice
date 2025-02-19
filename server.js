@@ -134,20 +134,39 @@ const updatePlayerHealth = (playerId, change, room) => {
   player.isAlive = newHealth > 0;
 
   if (!player.isAlive) {
-    emitGameLog(room, `💀 ${player.name} was eliminated!`);
+    // Only reveal role when player dies
+    emitGameLog(room, `💀 ${player.name} was eliminated! They were a ${player.role}!`);
     const playerIndex = room.gameState.playerOrder.indexOf(playerId);
     if (playerIndex !== -1) {
       room.gameState.playerOrder.splice(playerIndex, 1);
     }
     
+    // Check win conditions after a player dies
+    const winState = checkWinCondition(room);
+    if (winState.gameOver) {
+      // Now we can show all remaining roles in the win message
+      const finalRolesMessage = Object.values(room.players)
+        .filter(p => p.isAlive)
+        .map(p => `${p.name} (${p.role})`)
+        .join(', ');
+      emitGameLog(room, `${winState.message} Surviving players: ${finalRolesMessage}`);
+      io.to(room.id).emit('gameOver', {
+        winners: winState.winners,
+        message: winState.message
+      });
+      return;
+    }
+
     if (room.gameState.currentTurn === playerId) {
       progressToNextTurn(room);
     }
+  } else {
+    // Don't show role for health changes when player is still alive
+    const healthChangeType = change > 0 ? 'gained' : 'lost';
+    emitGameLog(room, `❤️ ${player.name} ${healthChangeType} ${Math.abs(change)} health (now: ${newHealth}/${player.maxHealth})`);
   }
 
   broadcastHealthUpdates(room);
-  emitGameLog(room, `${player.name}'s health changed by ${change} (now: ${newHealth})`);
-  
   return true;
 };
 
@@ -187,31 +206,30 @@ const handleArrowRoll = (dice, states, playerId, room) => {
 
   if (arrowCount === 0) return;
 
+  const player = room.players[playerId];
   console.log(`Processing ${arrowCount} new arrows for player ${playerId}`);
 
   const arrowsUntilEmpty = Math.min(arrowCount, room.gameState.arrowsOnBoard);
-  // Add arrows to current player
-  room.players[playerId].arrows += arrowsUntilEmpty;
+  // Fix: Use player.arrows instead of players.arrows
+  player.arrows += arrowsUntilEmpty;
   room.gameState.arrowsOnBoard -= arrowsUntilEmpty;
+
+  emitGameLog(room, `🏹 ${player.name} picked up ${arrowsUntilEmpty} arrows (has ${player.arrows} total)`);
 
   // Check if Indian Attack should trigger
   if (room.gameState.arrowsOnBoard === 0) {
+    emitGameLog(room, `⚔️ Indian Attack! All players with arrows take damage equal to their arrows`);
     // Deal damage based on arrows
     Object.values(room.players).forEach(player => {
       if (player.arrows > 0) {
+        emitGameLog(room, `⚔️ ${player.name} has ${player.arrows}`);
         updatePlayerHealth(player.socketId, -player.arrows, room);
         player.arrows = 0;
       }
     });
     // Reset board arrows
     room.gameState.arrowsOnBoard = TOTAL_ARROWS;
-  }
-
-  // Handle remaining arrows
-  const remainingArrows = arrowCount - arrowsUntilEmpty;
-  if (remainingArrows > 0) {
-    room.players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
-    room.gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
+    emitGameLog(room, `🏹 Arrow pile refilled to ${TOTAL_ARROWS}`);
   }
 
   broadcastArrowState(room);
@@ -258,10 +276,11 @@ const handleGatling = (playerId, dice, states, room) => {
   });
 
   if (room.players[playerId].arrows > 0) {
-    room.gameState.arrowsOnBoard += room.players[playerId].arrows;
+    const returnedArrows = room.players[playerId].arrows;
+    room.gameState.arrowsOnBoard += returnedArrows;
     room.players[playerId].arrows = 0;
     broadcastArrowState(room);
-    emitGameLog(room, `${room.players[playerId].name} returned all arrows to the pile`);
+    emitGameLog(room, `🏹 ${room.players[playerId].name} returned ${returnedArrows} arrows to the pile`);
   }
 
   return newStates;
@@ -283,6 +302,44 @@ const createNewRoom = (roomId) => ({
     arrowsOnBoard: TOTAL_ARROWS,
   }
 });
+
+// Add after other helper functions
+const checkWinCondition = (room) => {
+  const alivePlayers = Object.values(room.players).filter(p => p.isAlive);
+  const sheriff = Object.values(room.players).find(p => p.role === 'Sheriff');
+  
+  // If sheriff is dead
+  if (!sheriff.isAlive) {
+    // Check if only renegade is alive
+    if (alivePlayers.length === 1 && alivePlayers[0].role === 'Renegade') {
+      return {
+        gameOver: true,
+        winners: ['Renegade'],
+        message: '🎉 Renegade wins! They are the last player standing after the Sheriff died.'
+      };
+    }
+    // Otherwise outlaws win if sheriff dies
+    return {
+      gameOver: true,
+      winners: ['Outlaw'],
+      message: '🎉 Outlaws win! They successfully eliminated the Sheriff!'
+    };
+  }
+
+  // Check if sheriff and possibly deputies are only ones alive
+  const outlawsAlive = alivePlayers.some(p => p.role === 'Outlaw');
+  const renegadeAlive = alivePlayers.some(p => p.role === 'Renegade');
+
+  if (!outlawsAlive && !renegadeAlive) {
+    return {
+      gameOver: true,
+      winners: ['Sheriff', 'Deputy'],
+      message: '🎉 Law wins! The Sheriff and Deputies have eliminated all threats!'
+    };
+  }
+
+  return { gameOver: false };
+};
 
 // Handle Socket.io connections
 io.on('connection', (socket) => {
@@ -396,44 +453,41 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Check rerolls and dynamites before proceeding
     if (room.gameState.rerollsLeft <= 0 || checkDynamiteEnd(room.gameState.currentDice, room.gameState.diceStates)) {
       socket.emit('gameError', 'Cannot roll - either no rerolls left or dynamites exploded!');
       return;
     }
 
-    // Decrease rerolls first
     room.gameState.rerollsLeft--;
 
     const diceResult = [];
     const newDiceStates = {};
     
-    // Log kept dice if any
     if (Object.keys(keptDiceData.dice).length > 0) {
       const keptDiceSymbols = Object.values(keptDiceData.dice).join(' ');
-      emitGameLog(room, `${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
+      emitGameLog(room, `🎲 ${room.players[socket.id].name} kept: ${keptDiceSymbols}`);
     }
 
-    // Handle kept dice first
     Object.entries(keptDiceData.dice).forEach(([index, value]) => {
-      diceResult.push(value);
-      newDiceStates[diceResult.length - 1] = keptDiceData.states[index];
+      if (parseInt(index) < 5) {  // Ensure we only keep dice within the new limit
+        diceResult.push(value);
+        newDiceStates[diceResult.length - 1] = keptDiceData.states[index];
+      }
     });
 
-    // Add new rolled dice
-    const numNewDice = 6 - diceResult.length;
+    // Add new rolled dice up to 5 instead of 6
+    const numNewDice = 5 - diceResult.length;
     for (let i = 0; i < numNewDice; i++) {
       const randomIndex = Math.floor(Math.random() * diceSymbols.length);
       const rolledValue = diceSymbols[randomIndex];
       diceResult.push(rolledValue);
       
-      // Automatically resolve dynamites
       newDiceStates[diceResult.length - 1] = rolledValue === DYNAMITE_SYMBOL ? 'resolved' : 'rolled';
     }
 
     // Log new roll
     const newDiceSymbols = diceResult.filter((_, i) => newDiceStates[i] === 'rolled').join(' ');
-    emitGameLog(room, `${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
+    emitGameLog(room, `🎲 ${room.players[socket.id].name} rolled: ${newDiceSymbols}`);
 
     // Store current dice state
     room.gameState.currentDice = diceResult;
