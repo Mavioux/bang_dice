@@ -94,6 +94,9 @@ const GameLog = ({ entries }) => {
 };
 
 export default function App() {
+  // Add new state for error messages
+  const [errorMessage, setErrorMessage] = useState(null);
+
   // Extract room ID outside of useEffect
   const path = window.location.pathname;
   const roomMatch = path.match(/^\/room\/([^/]+)/);
@@ -234,6 +237,12 @@ export default function App() {
     // Register all handlers
     Object.entries(handlers).forEach(([event, handler]) => {
       socket.on(event, handler);
+    });
+
+    socket.on('gameError', (message) => {
+      setErrorMessage(message);
+      // Clear error after 3 seconds
+      setTimeout(() => setErrorMessage(null), 3000);
     });
 
     // Cleanup
@@ -624,6 +633,12 @@ export default function App() {
       {!gameStarted ? (
         <div className="lobby-container">
           <h1 className="title">🎲 Bang! The Dice Game 🎯</h1>
+          {/* Add error message display */}
+          {errorMessage && (
+            <div className="error-message">
+              {errorMessage}
+            </div>
+          )}
           {isInRoom && (
             <div className="room-id-display">
               <span>Room ID: {roomId}</span>

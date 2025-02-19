@@ -290,6 +290,7 @@ const handleGatling = (playerId, dice, states, room) => {
 const createNewRoom = (roomId) => ({
   id: roomId,
   players: {},
+  joinable: true,  // Add this property
   gameState: {
     started: false,
     playerOrder: [],
@@ -364,6 +365,12 @@ io.on('connection', (socket) => {
     if (!currentRoom) return;
     const room = rooms.get(currentRoom);
     
+    // Check if room is joinable before allowing new players
+    if (!room.joinable) {
+      socket.emit('gameError', 'Cannot join - game is already in progress');
+      return;
+    }
+    
     room.players[socket.id] = {
       name: playerName,
       role: null,
@@ -386,6 +393,9 @@ io.on('connection', (socket) => {
       io.to(currentRoom).emit('gameError', 'Need at least 4 players to start the game.');
       return;
     }
+
+    // Set room as no longer joinable when game starts
+    room.joinable = false;
 
     const numPlayers = Object.keys(room.players).length;
 

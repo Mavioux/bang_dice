@@ -544,3 +544,19 @@ body {
   background: #45a049;
 }
 
+.error-message {
+  background-color: #ff4444;
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  margin: 10px 0;
+  text-align: center;
+  animation: fadeOut 3s forwards;
+}
+
+@keyframes fadeOut {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
