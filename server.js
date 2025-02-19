@@ -134,17 +134,34 @@ const updatePlayerHealth = (playerId, change, room) => {
   player.isAlive = newHealth > 0;
 
   if (!player.isAlive) {
-    emitGameLog(room, `💀 ${player.name} (${player.role}) was eliminated!`);
+    // Only reveal role when player dies
+    emitGameLog(room, `💀 ${player.name} was eliminated! They were a ${player.role}!`);
     const playerIndex = room.gameState.playerOrder.indexOf(playerId);
     if (playerIndex !== -1) {
       room.gameState.playerOrder.splice(playerIndex, 1);
     }
     
+    // Check win conditions after a player dies
+    const winState = checkWinCondition(room);
+    if (winState.gameOver) {
+      // Now we can show all remaining roles in the win message
+      const finalRolesMessage = Object.values(room.players)
+        .filter(p => p.isAlive)
+        .map(p => `${p.name} (${p.role})`)
+        .join(', ');
+      emitGameLog(room, `${winState.message} Surviving players: ${finalRolesMessage}`);
+      io.to(room.id).emit('gameOver', {
+        winners: winState.winners,
+        message: winState.message
+      });
+      return;
+    }
+
     if (room.gameState.currentTurn === playerId) {
       progressToNextTurn(room);
     }
   } else {
-    // Add health change log
+    // Don't show role for health changes when player is still alive
     const healthChangeType = change > 0 ? 'gained' : 'lost';
     emitGameLog(room, `❤️ ${player.name} ${healthChangeType} ${Math.abs(change)} health (now: ${newHealth}/${player.maxHealth})`);
   }
@@ -193,7 +210,7 @@ const handleArrowRoll = (dice, states, playerId, room) => {
   console.log(`Processing ${arrowCount} new arrows for player ${playerId}`);
 
   const arrowsUntilEmpty = Math.min(arrowCount, room.gameState.arrowsOnBoard);
-  // Add arrows to current player
+  // Fix: Use player.arrows instead of players.arrows
   player.arrows += arrowsUntilEmpty;
   room.gameState.arrowsOnBoard -= arrowsUntilEmpty;
 
@@ -205,7 +222,7 @@ const handleArrowRoll = (dice, states, playerId, room) => {
     // Deal damage based on arrows
     Object.values(room.players).forEach(player => {
       if (player.arrows > 0) {
-        emitGameLog(room, `⚔️ ${player.name} has ${player.arrows} arrows`);
+        emitGameLog(room, `⚔️ ${player.name} has ${player.arrows}`);
         updatePlayerHealth(player.socketId, -player.arrows, room);
         player.arrows = 0;
       }
@@ -213,13 +230,6 @@ const handleArrowRoll = (dice, states, playerId, room) => {
     // Reset board arrows
     room.gameState.arrowsOnBoard = TOTAL_ARROWS;
     emitGameLog(room, `🏹 Arrow pile refilled to ${TOTAL_ARROWS}`);
-  }
-
-  // Handle remaining arrows
-  const remainingArrows = arrowCount - arrowsUntilEmpty;
-  if (remainingArrows > 0) {
-    room.players[playerId].arrows += Math.min(remainingArrows, TOTAL_ARROWS);
-    room.gameState.arrowsOnBoard -= Math.min(remainingArrows, TOTAL_ARROWS);
   }
 
   broadcastArrowState(room);
@@ -292,6 +302,44 @@ const createNewRoom = (roomId) => ({
     arrowsOnBoard: TOTAL_ARROWS,
   }
 });
+
+// Add after other helper functions
+const checkWinCondition = (room) => {
+  const alivePlayers = Object.values(room.players).filter(p => p.isAlive);
+  const sheriff = Object.values(room.players).find(p => p.role === 'Sheriff');
+  
+  // If sheriff is dead
+  if (!sheriff.isAlive) {
+    // Check if only renegade is alive
+    if (alivePlayers.length === 1 && alivePlayers[0].role === 'Renegade') {
+      return {
+        gameOver: true,
+        winners: ['Renegade'],
+        message: '🎉 Renegade wins! They are the last player standing after the Sheriff died.'
+      };
+    }
+    // Otherwise outlaws win if sheriff dies
+    return {
+      gameOver: true,
+      winners: ['Outlaw'],
+      message: '🎉 Outlaws win! They successfully eliminated the Sheriff!'
+    };
+  }
+
+  // Check if sheriff and possibly deputies are only ones alive
+  const outlawsAlive = alivePlayers.some(p => p.role === 'Outlaw');
+  const renegadeAlive = alivePlayers.some(p => p.role === 'Renegade');
+
+  if (!outlawsAlive && !renegadeAlive) {
+    return {
+      gameOver: true,
+      winners: ['Sheriff', 'Deputy'],
+      message: '🎉 Law wins! The Sheriff and Deputies have eliminated all threats!'
+    };
+  }
+
+  return { gameOver: false };
+};
 
 // Handle Socket.io connections
 io.on('connection', (socket) => {
@@ -662,7 +710,7 @@ const progressToNextTurn = (room) => {
   broadcastArrowState(room);
 
   const nextPlayer = room.players[room.gameState.playerOrder[nextIndex]];
-  emitGameLog(room, `🎲 Turn changed to ${nextPlayer.name} (${nextPlayer.role})`);
+  emitGameLog(room, `🎲 Turn changed to ${nextPlayer.name}`);
   
   // Add debug logging
   console.log('Server Player Order:', room.gameState.playerOrder.map(id => ({
