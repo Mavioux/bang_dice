@@ -723,6 +723,17 @@ export default function App() {
               })()}
             </div>
 
+            {/* Move game over content inside game container */}
+            {gameOver && (
+              <div className="game-over-content">
+                <h2>Game Over!</h2>
+                <p>{winMessage}</p>
+                <button onClick={() => window.location.reload()}>
+                  Play Again
+                </button>
+              </div>
+            )}
+
             {/* Dice Rolling Section */}
             <div className="dice-section">
               <h3>{socket.id === currentTurn ? 'Your Dice' : `${players.find(p => p.socketId === currentTurn)?.name}'s Dice`}</h3>
@@ -756,17 +767,6 @@ export default function App() {
             )}
           </div>
           <GameLog entries={gameLog} />
-          {gameOver && (
-            <div className="game-over-overlay">
-              <div className="game-over-content">
-                <h2>Game Over!</h2>
-                <p>{winMessage}</p>
-                <button onClick={() => window.location.reload()}>
-                  Play Again
-                </button>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
